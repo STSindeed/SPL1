@@ -1,35 +1,47 @@
 package neuralforge;
 
+import neuralforge.activation.ReLU;
+import neuralforge.activation.Softmax;
+import neuralforge.init.HeInitializer;
+import neuralforge.init.XavierInitializer;
+import neuralforge.layer.DenseLayer;
+import neuralforge.loss.CrossEntropy;
+import neuralforge.loss.Loss;
 import neuralforge.math.Matrix;
 import java.util.Random;
 
 public class Main{
 
     public static void main(String[] args){
-        System.out.println("NeuralForge - Matrix demo");
+        System.out.println("NeuralForge - forward pass demo");
+        System.out.println();
 
-        Matrix x = new Matrix(new double[][]{{1, 2, 3}, {4, 5, 6}});
-        Matrix w = new Matrix(new double[][]{{0.1, 0.2}, {0.3, 0.4}, {0.5, 0.6}});
-        Matrix b = new Matrix(new double[][]{{0.5, -0.5}});
+        Random rng = new Random(1);
 
-        Matrix z = x.multiply(w).addBias(b);
+        DenseLayer hidden = new DenseLayer(4, 5, new ReLU(), new HeInitializer(), rng);
+        DenseLayer output = new DenseLayer(5, 3, new Softmax(), new XavierInitializer(), rng);
+        System.out.println("layer 1: " + hidden + ", parameters: " + hidden.parameterCount());
+        System.out.println("layer 2: " + output + ", parameters: " + output.parameterCount());
+        System.out.println();
 
-        System.out.println("X (" + x.shape() + "):");
-        System.out.print(x);
-        System.out.println("Z = X*W + b (" + z.shape() + "):");
-        System.out.print(z);
+        Matrix x = new Matrix(new double[][]{
+                {0.5, -1.2, 3.0, 0.7},
+                {1.5, 0.3, -0.8, 2.1}
+        });
 
-        System.out.println("expected: [2.7 2.3] and [5.4 5.9]");
+        Matrix probabilities = output.forward(hidden.forward(x));
+        System.out.println("class probabilities (each row adds up to 1):");
+        System.out.print(probabilities);
 
-        Random rng = new Random(42);
-        int n = 300;
-        Matrix a = Matrix.randomUniform(n, n, -1, 1, rng);
-        Matrix c = Matrix.randomUniform(n, n, -1, 1, rng);
+        Matrix target = new Matrix(new double[][]{
+                {0, 0, 1},
+                {1, 0, 0}
+        });
 
-        long start = System.nanoTime();
-        a.multiply(c);
-        long end = System.nanoTime();
+        Loss loss = new CrossEntropy();
+        System.out.println();
+        System.out.println(loss.name() + " = " + loss.compute(probabilities, target));
 
-        System.out.println("multiply " + n + "x" + n + " took " + (end - start) / 1_000_000 + " ms");
+        System.out.println("pure guessing with 3 classes would give " + Math.log(3));
     }
 }
