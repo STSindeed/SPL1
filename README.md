@@ -1,7 +1,7 @@
 # NeuralForge
 
 A feedforward neural network engine written in plain Java, no external
-libraries.
+libraries. Built for Software Project Lab 1 (SPL-1), IIT, University of Dhaka.
 
 The network is trained from scratch (matrices, forward pass, backpropagation,
 optimizers) and will later be used for digit recognition through a Swing GUI,
@@ -27,7 +27,11 @@ Windows (cmd):
 
 ## Folder layout
 
-    src/main/java/neuralforge/        main source code
-    src/main/java/neuralforge/math/   Matrix class
-    src/test/java/neuralforge/        tests (own small runner, no JUnit)
-    out/                              compiled classes (not committed)
+    src/main/java/neuralforge/              main source code
+    src/main/java/neuralforge/math/         Matrix class
+    src/main/java/neuralforge/activation/   activation functions
+    src/main/java/neuralforge/init/         weight initialisers
+    src/main/java/neuralforge/layer/        dense layer
+    src/main/java/neuralforge/loss/         loss functions
+    src/test/java/neuralforge/              tests (own small runner, no JUnit)
+    out/                                    compiled classes (not committed)
