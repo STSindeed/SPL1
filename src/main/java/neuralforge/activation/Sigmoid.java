@@ -19,6 +19,12 @@ public class Sigmoid implements Activation{
     }
 
     @Override
+    public Matrix backward(Matrix z, Matrix output, Matrix gradOutput){
+        Matrix derivative = output.apply(a -> a * (1.0 - a));
+        return gradOutput.hadamard(derivative);
+    }
+
+    @Override
     public String name(){
         return "sigmoid";
     }

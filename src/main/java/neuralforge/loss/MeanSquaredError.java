@@ -22,6 +22,15 @@ public class MeanSquaredError implements Loss{
     }
 
     @Override
+    public Matrix gradient(Matrix predicted, Matrix target){
+        if(predicted.rows() != target.rows() || predicted.cols() != target.cols()){
+            throw new IllegalArgumentException("shape mismatch: predicted " + predicted.shape() + ", target " + target.shape());
+        }
+        double n = predicted.rows() * predicted.cols();
+        return predicted.subtract(target).scale(2.0 / n);
+    }
+
+    @Override
     public String name(){
         return "mse";
     }

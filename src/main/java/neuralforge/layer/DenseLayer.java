@@ -5,7 +5,7 @@ import neuralforge.init.Initializer;
 import neuralforge.math.Matrix;
 import java.util.Random;
 
-public class DenseLayer {
+public class DenseLayer{
 
     private final Matrix weights;
     private final Matrix biases;
@@ -14,6 +14,9 @@ public class DenseLayer {
     private Matrix lastInput;
     private Matrix lastZ;
     private Matrix lastOutput;
+
+    private Matrix gradWeights;
+    private Matrix gradBiases;
 
     public DenseLayer(int inputSize, int outputSize, Activation activation, Initializer initializer, Random rng){
         this(initializer.createWeights(inputSize, outputSize, rng), Matrix.zeros(1, outputSize), activation);
@@ -43,6 +46,21 @@ public class DenseLayer {
         return output;
     }
 
+    public Matrix backward(Matrix gradOutput){
+        if(lastInput == null){
+            throw new IllegalStateException("call forward() before backward()");
+        }
+        if(gradOutput.rows() != lastOutput.rows() || gradOutput.cols() != lastOutput.cols()){
+            throw new IllegalArgumentException("gradient " + gradOutput.shape() + " does not match layer output " + lastOutput.shape());
+        }
+
+        Matrix gradZ = activation.backward(lastZ, lastOutput, gradOutput);
+
+        gradWeights = lastInput.transpose().multiply(gradZ);
+        gradBiases = gradZ.columnSums();
+
+        return gradZ.multiply(weights.transpose());
+    }
 
     public int inputSize(){
         return weights.rows();
@@ -66,6 +84,14 @@ public class DenseLayer {
 
     public Activation getActivation(){
         return activation;
+    }
+
+    public Matrix getGradWeights(){
+        return gradWeights;
+    }
+
+    public Matrix getGradBiases(){
+        return gradBiases;
     }
 
     public Matrix getLastInput(){

@@ -12,8 +12,8 @@ public class Matrix{
 
     private final double[] data;
 
-
     public Matrix(int rows, int cols){
+        // a matrix with zero or negative size makes no sense, so fail early
         if(rows <= 0 || cols <= 0){
             throw new IllegalArgumentException("size must be positive, got " + rows + "x" + cols);
         }
@@ -165,6 +165,13 @@ public class Matrix{
         return result;
     }
 
+    public void addScaledInPlace(Matrix other, double factor){
+        checkSameShape(other, "addScaledInPlace");
+        for(int i = 0; i < data.length; i++){
+            this.data[i] += factor * other.data[i];
+        }
+    }
+
     public Matrix addBias(Matrix bias){
         if(bias.rows != 1 || bias.cols != this.cols){
             throw new IllegalArgumentException("bias must be 1x" + cols + " but it is " + bias.shape());
@@ -186,6 +193,37 @@ public class Matrix{
             }
         }
         return result;
+    }
+
+    public Matrix selectRows(int[] indices, int from, int to){
+        if(from < 0 || to > indices.length || from >= to){
+            throw new IllegalArgumentException("bad range " + from + ".." + to + " for " + indices.length + " indices");
+        }
+        Matrix result = new Matrix(to - from, cols);
+        for(int r = from; r < to; r++){
+            int source = indices[r];
+            if(source < 0 || source >= rows){
+                throw new IndexOutOfBoundsException("row " + source + " is outside " + shape());
+            }
+            System.arraycopy(this.data, source * cols, result.data, (r - from) * cols, cols);
+        }
+        return result;
+    }
+
+    public int[] argmaxRows(){
+        int[] best = new int[rows];
+        for(int i = 0; i < rows; i++){
+            int bestCol = 0;
+            double bestValue = data[i * cols];
+            for(int j = 1; j < cols; j++){
+                if(data[i * cols + j] > bestValue){
+                    bestValue = data[i * cols + j];
+                    bestCol = j;
+                }
+            }
+            best[i] = bestCol;
+        }
+        return best;
     }
 
     public boolean approxEquals(Matrix other, double tolerance){
@@ -222,7 +260,7 @@ public class Matrix{
             throw new IndexOutOfBoundsException("(" + i + ", " + j + ") is outside " + shape());
         }
     }
-    
+
     private void checkSameShape(Matrix other, String opName){
         if(this.rows != other.rows || this.cols != other.cols){
             throw new IllegalArgumentException("cannot " + opName + " " + shape() + " and " + other.shape());

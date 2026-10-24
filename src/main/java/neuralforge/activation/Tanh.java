@@ -10,6 +10,12 @@ public class Tanh implements Activation{
     }
 
     @Override
+    public Matrix backward(Matrix z, Matrix output, Matrix gradOutput){
+        Matrix derivative = output.apply(a -> 1.0 - a * a);
+        return gradOutput.hadamard(derivative);
+    }
+
+    @Override
     public String name(){
         return "tanh";
     }

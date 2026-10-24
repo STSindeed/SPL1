@@ -21,6 +21,13 @@ public class LeakyReLU implements Activation{
     }
 
     @Override
+    public Matrix backward(Matrix z, Matrix output, Matrix gradOutput){
+        double s = this.slope;
+        Matrix derivative = z.apply(x -> x > 0 ? 1.0 : s);
+        return gradOutput.hadamard(derivative);
+    }
+
+    @Override
     public String name(){
         return "leaky_relu";
     }
