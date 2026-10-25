@@ -33,5 +33,8 @@ Windows (cmd):
     src/main/java/neuralforge/init/         weight initialisers
     src/main/java/neuralforge/layer/        dense layer
     src/main/java/neuralforge/loss/         loss functions
+    src/main/java/neuralforge/optimizer/    optimizers (SGD)
+    src/main/java/neuralforge/network/      network and training loop
+    src/main/java/neuralforge/gradcheck/    gradient checking
     src/test/java/neuralforge/              tests (own small runner, no JUnit)
     out/                                    compiled classes (not committed)

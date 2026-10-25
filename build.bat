@@ -11,7 +11,7 @@ set MAIN_CLASS=neuralforge.Main
 
 REM full names of the test classes to run, separated by spaces
 REM add every new test class here
-set TEST_CLASSES=neuralforge.math.MatrixTest neuralforge.activation.ActivationTest neuralforge.init.InitializerTest neuralforge.layer.DenseLayerTest neuralforge.loss.LossTest
+set TEST_CLASSES=neuralforge.math.MatrixTest neuralforge.activation.ActivationTest neuralforge.init.InitializerTest neuralforge.layer.DenseLayerTest neuralforge.loss.LossTest neuralforge.optimizer.OptimizerTest neuralforge.gradcheck.GradientCheckTest neuralforge.network.NeuralNetworkTest
 
 REM pick what to do from the first argument (%1)
 if "%1"=="clean" goto clean
