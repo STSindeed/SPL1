@@ -1,6 +1,7 @@
 package neuralforge.loss;
 
 import neuralforge.math.Matrix;
+import java.util.Random;
 import static neuralforge.TestHelper.*;
 
 public class LossTest{
@@ -10,6 +11,7 @@ public class LossTest{
     public static void main(String[] args){
         testMeanSquaredError();
         testCrossEntropy();
+        testGradients();
         testErrors();
         finish();
     }
@@ -61,10 +63,51 @@ public class LossTest{
         check("worse prediction, bigger loss", ce.compute(worse, t1) > ce.compute(better, t1));
     }
 
+    private static void testGradients(){
+        Loss mse = new MeanSquaredError();
+        Matrix g1 = mse.gradient(new Matrix(new double[][]{{1, 2}}), new Matrix(new double[][]{{0, 0}}));
+        check("mse gradient by hand", g1.approxEquals(new Matrix(new double[][]{{1, 2}}), TOL));
+
+        Loss ce = new CrossEntropy();
+        Matrix g2 = ce.gradient(new Matrix(new double[][]{{0.5, 0.5}}), new Matrix(new double[][]{{1, 0}}));
+        check("cross entropy gradient by hand", g2.approxEquals(new Matrix(new double[][]{{-2, 0}}), TOL));
+
+        Matrix g3 = ce.gradient(new Matrix(new double[][]{{0.5, 0.5}, {0.25, 0.75}}), new Matrix(new double[][]{{1, 0}, {0, 1}}));
+        check("cross entropy gradient batch factor", near(g3.get(0, 0), -1.0, TOL) && near(g3.get(1, 1), -1.0 / 0.75 / 2, TOL));
+
+        Random rng = new Random(5);
+        Matrix pred = Matrix.randomUniform(4, 3, 0.1, 0.9, rng);
+        Matrix target = new Matrix(new double[][]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 1, 0}});
+        checkAgainstNumerical("mse", mse, pred, target);
+        checkAgainstNumerical("cross entropy", ce, pred, target);
+
+        check("mse gradient keeps shape", mse.gradient(pred, target).shape().equals("4x3"));
+    }
+
+    private static void checkAgainstNumerical(String name, Loss loss, Matrix pred, Matrix target){
+        Matrix analytical = loss.gradient(pred, target);
+        double h = 1e-6;
+        double worst = 0;
+        for(int i = 0; i < pred.rows(); i++){
+            for(int j = 0; j < pred.cols(); j++){
+                double original = pred.get(i, j);
+                pred.set(i, j, original + h);
+                double plus = loss.compute(pred, target);
+                pred.set(i, j, original - h);
+                double minus = loss.compute(pred, target);
+                pred.set(i, j, original);
+                worst = Math.max(worst, Math.abs((plus - minus) / (2 * h) - analytical.get(i, j)));
+            }
+        }
+        check(name + " gradient matches numerical slope", worst < 1e-6);
+    }
+
     private static void testErrors(){
         Matrix a = Matrix.zeros(2, 3);
         Matrix b = Matrix.zeros(2, 2);
         expectThrows("mse shape mismatch", () -> new MeanSquaredError().compute(a, b));
         expectThrows("cross entropy shape mismatch", () -> new CrossEntropy().compute(a, b));
+        expectThrows("mse gradient shape mismatch", () -> new MeanSquaredError().gradient(a, b));
+        expectThrows("cross entropy gradient shape mismatch", () -> new CrossEntropy().gradient(a, b));
     }
 }

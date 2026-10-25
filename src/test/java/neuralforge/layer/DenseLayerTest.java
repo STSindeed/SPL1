@@ -19,6 +19,7 @@ public class DenseLayerTest{
         testForwardSigmoidAndSoftmax();
         testInitializedLayer();
         testSavedValues();
+        testBackward();
         testErrors();
         finish();
     }
@@ -97,8 +98,38 @@ public class DenseLayerTest{
         check("saved output", layer.getLastOutput() == output);
     }
 
+    private static void testBackward(){
+        DenseLayer layer = new DenseLayer(sampleWeights(), Matrix.zeros(1, 2), new Linear());
+        layer.forward(sampleInput());
+
+        Matrix gradInput = layer.backward(Matrix.filled(2, 2, 1.0));
+
+        Matrix expectedDW = new Matrix(new double[][]{{5, 5}, {7, 7}, {9, 9}});
+        check("gradient of weights", layer.getGradWeights().approxEquals(expectedDW, TOL));
+
+        check("gradient of biases", layer.getGradBiases().approxEquals(new Matrix(new double[][]{{2, 2}}), TOL));
+
+        Matrix expectedDX = new Matrix(new double[][]{{0.3, 0.7, 1.1}, {0.3, 0.7, 1.1}});
+        check("gradient passed to the previous layer", gradInput.approxEquals(expectedDX, TOL));
+
+        Matrix biases = new Matrix(new double[][]{{-3, -3}});
+        DenseLayer relu = new DenseLayer(sampleWeights(), biases, new ReLU());
+        relu.forward(sampleInput());
+        relu.backward(Matrix.filled(2, 2, 1.0));
+        Matrix expectedReluDW = new Matrix(new double[][]{{4, 4}, {5, 5}, {6, 6}});
+        check("relu gradient ignores inactive neurons", relu.getGradWeights().approxEquals(expectedReluDW, TOL));
+
+        DenseLayer fresh = new DenseLayer(sampleWeights(), Matrix.zeros(1, 2), new Linear());
+        check("no gradients before backward", fresh.getGradWeights() == null && fresh.getGradBiases() == null);
+    }
+
     private static void testErrors(){
         DenseLayer layer = new DenseLayer(sampleWeights(), Matrix.zeros(1, 2), new Linear());
+
+        expectThrows("backward before forward", () -> layer.backward(Matrix.zeros(2, 2)));
+
+        layer.forward(sampleInput());
+        expectThrows("backward bad gradient shape", () -> layer.backward(Matrix.zeros(3, 2)));
 
         expectThrows("wrong input width", () -> layer.forward(Matrix.zeros(4, 2)));
 

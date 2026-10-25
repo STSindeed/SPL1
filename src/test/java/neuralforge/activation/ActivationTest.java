@@ -1,6 +1,7 @@
 package neuralforge.activation;
 
 import neuralforge.math.Matrix;
+import java.util.Random;
 import static neuralforge.TestHelper.*;
 
 public class ActivationTest{
@@ -14,6 +15,7 @@ public class ActivationTest{
         testLeakyReLU();
         testLinear();
         testSoftmax();
+        testBackward();
         finish();
     }
 
@@ -97,5 +99,63 @@ public class ActivationTest{
 
         Matrix uniform = sm.forward(row(4, 4, 4, 4));
         check("softmax uniform", near(uniform.get(0, 2), 0.25, TOL));
+    }
+
+    private static void testBackward(){
+        Activation[] all = {new Sigmoid(), new Tanh(), new ReLU(), new LeakyReLU(0.1), new Linear(), new Softmax()};
+        Random rng = new Random(11);
+
+        for(Activation act : all){
+            Matrix z = Matrix.randomUniform(3, 4, -2, 2, rng);
+            Matrix g = Matrix.randomUniform(3, 4, -1, 1, rng);
+
+            Matrix analytical = act.backward(z, act.forward(z), g);
+            check(act.name() + " backward keeps shape", analytical.shape().equals("3x4"));
+
+            double h = 1e-6;
+            double worst = 0;
+            for(int i = 0; i < z.rows(); i++){
+                for(int j = 0; j < z.cols(); j++){
+                    double original = z.get(i, j);
+
+                    z.set(i, j, original + h);
+                    double plus = weightedSum(act.forward(z), g);
+                    z.set(i, j, original - h);
+                    double minus = weightedSum(act.forward(z), g);
+                    z.set(i, j, original);
+
+                    double numerical = (plus - minus) / (2 * h);
+                    worst = Math.max(worst, Math.abs(numerical - analytical.get(i, j)));
+                }
+            }
+            check(act.name() + " backward matches numerical slope", worst < 1e-6);
+        }
+
+        Sigmoid sig = new Sigmoid();
+        Matrix z0 = row(0);
+        check("sigmoid slope at 0", near(sig.backward(z0, sig.forward(z0), row(1)).get(0, 0), 0.25, TOL));
+
+        Matrix zr = row(-1, 2);
+        Matrix gr = new ReLU().backward(zr, new ReLU().forward(zr), row(5, 5));
+        check("relu blocks negative", gr.get(0, 0) == 0.0);
+        check("relu passes positive", gr.get(0, 1) == 5.0);
+
+        Softmax sm = new Softmax();
+        Matrix zs = row(0.5, -1, 2);
+        Matrix gs = sm.backward(zs, sm.forward(zs), row(1, 2, 3));
+        check("softmax gradient row sums to 0", near(gs.get(0, 0) + gs.get(0, 1) + gs.get(0, 2), 0.0, TOL));
+
+        expectThrows("backward bad gradient shape", () -> sm.backward(zs, sm.forward(zs), Matrix.zeros(2, 3)));
+        expectThrows("sigmoid backward bad gradient shape", () -> sig.backward(z0, sig.forward(z0), Matrix.zeros(2, 2)));
+    }
+
+    private static double weightedSum(Matrix a, Matrix b){
+        double sum = 0;
+        for(int i = 0; i < a.rows(); i++){
+            for(int j = 0; j < a.cols(); j++){
+                sum += a.get(i, j) * b.get(i, j);
+            }
+        }
+        return sum;
     }
 }
