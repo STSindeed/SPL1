@@ -4,6 +4,8 @@ import neuralforge.activation.ReLU;
 import neuralforge.activation.Sigmoid;
 import neuralforge.activation.Softmax;
 import neuralforge.activation.Tanh;
+import neuralforge.data.Dataset;
+import neuralforge.data.DatasetLoader;
 import neuralforge.gradcheck.GradientChecker;
 import neuralforge.init.HeInitializer;
 import neuralforge.init.XavierInitializer;
@@ -11,22 +13,55 @@ import neuralforge.layer.DenseLayer;
 import neuralforge.loss.CrossEntropy;
 import neuralforge.loss.MeanSquaredError;
 import neuralforge.math.Matrix;
+import neuralforge.metrics.ConfusionMatrix;
 import neuralforge.network.NeuralNetwork;
 import neuralforge.optimizer.SGD;
+import neuralforge.preprocess.StandardScaler;
+import neuralforge.training.Evaluation;
+import neuralforge.training.Trainer;
+import neuralforge.training.TrainingHistory;
+import java.io.File;
 import java.util.Locale;
 import java.util.Random;
 
 public class Main{
 
+    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs]]]";
+
     public static void main(String[] args){
+        String mode = args.length > 0 ? args[0].toLowerCase() : "all";
+        boolean all = mode.equals("all");
+
         System.out.println("NeuralForge - training demo");
         System.out.println();
 
-        gradientCheckDemo();
-        xorDemo();
-        blobsDemo();
-    }
+        boolean known = all;
+        if(all || mode.equals("check")){
+            gradientCheckDemo();
+            known = true;
+        }
+        if(all || mode.equals("xor")){
+            xorDemo();
+            known = true;
+        }
+        if(all || mode.equals("blobs")){
+            blobsDemo();
+            known = true;
+        }
+        if(all || mode.equals("iris")){
+            irisDemo();
+            known = true;
+        }
+        if(mode.equals("mnist")){
+            mnistDemo(args);
+            known = true;
+        }
 
+        if(!known){
+            System.out.println("unknown demo '" + mode + "'");
+            System.out.println(USAGE);
+        }
+    }
 
     private static void gradientCheckDemo(){
         System.out.println("== 1. gradient check ==");
@@ -45,7 +80,6 @@ public class Main{
         System.out.println(String.format(Locale.US, "worst relative error: %.3e", worst));
         System.out.println();
     }
-
 
     private static void xorDemo(){
         System.out.println("== 2. XOR ==");
@@ -98,5 +132,111 @@ public class Main{
         net.fit(x, y, new CrossEntropy(), new SGD(0.1), 100, 16, rng, 20);
 
         System.out.println(String.format(Locale.US, "accuracy after training:  %.1f%%", 100 * net.accuracy(x, y)));
+        System.out.println();
+    }
+
+    private static void irisDemo(){
+        System.out.println("== 4. iris (csv pipeline) ==");
+
+        String path = "data/iris.csv";
+        if(!new File(path).exists()){
+            System.out.println("file " + path + " not found, run the program from the project folder");
+            System.out.println();
+            return;
+        }
+
+        Dataset all = DatasetLoader.fromCsv(path, true, -1);
+        System.out.print(all.describe());
+
+        Random rng = new Random(42);
+
+        Dataset[] parts = all.stratifiedSplit(0.2, rng);
+
+        StandardScaler scaler = new StandardScaler();
+        Dataset train = parts[0].withFeatures(scaler.fitTransform(parts[0].getFeatures()));
+        Dataset test = parts[1].withFeatures(scaler.transform(parts[1].getFeatures()));
+        System.out.println("train: " + train.size() + " samples, test: " + test.size() + " samples");
+
+        NeuralNetwork net = new NeuralNetwork();
+        net.addLayer(new DenseLayer(train.featureCount(), 8, new ReLU(), new HeInitializer(), rng));
+        net.addLayer(new DenseLayer(8, train.classCount(), new Softmax(), new XavierInitializer(), rng));
+        System.out.print(net.summary());
+
+        Trainer trainer = new Trainer(net, new CrossEntropy(), new SGD(0.1), rng);
+        TrainingHistory history = trainer.train(train, test, 100, 16, 20);
+        history.saveCsv("results/iris_history.csv");
+
+        Evaluation result = trainer.evaluate(test);
+        ConfusionMatrix matrix = ConfusionMatrix.of(test.getLabels(), result.getPredictions(), test.classCount());
+        System.out.print(matrix.format(test.getClassNames()));
+        System.out.print(matrix.report(test.getClassNames()));
+        System.out.println();
+    }
+
+    private static void mnistDemo(String[] args){
+        System.out.println("== 5. mnist ==");
+
+        int trainLimit = 0;
+        int epochs = 5;
+        try{
+            if(args.length > 1){
+                trainLimit = Integer.parseInt(args[1]);
+            }
+            if(args.length > 2){
+                epochs = Integer.parseInt(args[2]);
+            }
+        }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+
+        String folder = "data/mnist/";
+        String trainImages = findIdxFile(folder + "train-images-idx3-ubyte");
+        String trainLabels = findIdxFile(folder + "train-labels-idx1-ubyte");
+        String testImages = findIdxFile(folder + "t10k-images-idx3-ubyte");
+        String testLabels = findIdxFile(folder + "t10k-labels-idx1-ubyte");
+
+        if(trainImages == null || trainLabels == null || testImages == null || testLabels == null){
+            System.out.println("MNIST files not found in " + folder);
+            System.out.println("see " + folder + "README.txt for the names of the four files");
+            System.out.println();
+            return;
+        }
+
+        long loadStart = System.nanoTime();
+        Dataset train = DatasetLoader.fromIdx(trainImages, trainLabels, trainLimit, 10);
+        Dataset test = DatasetLoader.fromIdx(testImages, testLabels, 0, 10);
+        double loadSeconds = (System.nanoTime() - loadStart) / 1e9;
+        System.out.println(String.format(Locale.US, "loaded %d training and %d test images in %.1fs", train.size(), test.size(), loadSeconds));
+
+        Random rng = new Random(2026);
+
+        NeuralNetwork net = new NeuralNetwork();
+        net.addLayer(new DenseLayer(train.featureCount(), 128, new ReLU(), new HeInitializer(), rng));
+        net.addLayer(new DenseLayer(128, train.classCount(), new Softmax(), new XavierInitializer(), rng));
+        System.out.print(net.summary());
+
+        Trainer trainer = new Trainer(net, new CrossEntropy(), new SGD(0.1), rng);
+        TrainingHistory history = trainer.train(train, test, epochs, 64, 1);
+        history.saveCsv("results/mnist_history.csv");
+
+        int best = history.bestValidationEpoch();
+        System.out.println(String.format(Locale.US, "best test accuracy %.2f%% at epoch %d", 100 * history.getValidationAccuracy(best), best + 1));
+
+        Evaluation result = trainer.evaluate(test);
+        ConfusionMatrix matrix = ConfusionMatrix.of(test.getLabels(), result.getPredictions(), test.classCount());
+        System.out.print(matrix.format(test.getClassNames()));
+        System.out.print(matrix.report(test.getClassNames()));
+        System.out.println();
+    }
+
+    private static String findIdxFile(String basePath){
+        if(new File(basePath).exists()){
+            return basePath;
+        }
+        if(new File(basePath + ".gz").exists()){
+            return basePath + ".gz";
+        }
+        return null;
     }
 }
