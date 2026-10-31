@@ -7,13 +7,16 @@ import neuralforge.activation.Tanh;
 import neuralforge.data.Dataset;
 import neuralforge.data.DatasetLoader;
 import neuralforge.gradcheck.GradientChecker;
+import neuralforge.gui.DigitApp;
 import neuralforge.init.HeInitializer;
 import neuralforge.init.XavierInitializer;
+import neuralforge.io.ModelIO;
 import neuralforge.layer.DenseLayer;
 import neuralforge.loss.CrossEntropy;
 import neuralforge.loss.MeanSquaredError;
 import neuralforge.math.Matrix;
 import neuralforge.metrics.ConfusionMatrix;
+import neuralforge.metrics.Metrics;
 import neuralforge.network.NeuralNetwork;
 import neuralforge.optimizer.SGD;
 import neuralforge.preprocess.StandardScaler;
@@ -26,7 +29,11 @@ import java.util.Random;
 
 public class Main{
 
-    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs]]]";
+    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs]] | eval [modelFile] | gui [modelFile]]";
+
+    private static final String MODEL_PATH = "models/mnist.nfm";
+
+    private static final String MNIST_FOLDER = "data/mnist/";
 
     public static void main(String[] args){
         String mode = args.length > 0 ? args[0].toLowerCase() : "all";
@@ -54,6 +61,14 @@ public class Main{
         }
         if(mode.equals("mnist")){
             mnistDemo(args);
+            known = true;
+        }
+        if(mode.equals("eval")){
+            evalDemo(args);
+            known = true;
+        }
+        if(mode.equals("gui")){
+            guiDemo(args);
             known = true;
         }
 
@@ -190,22 +205,14 @@ public class Main{
             return;
         }
 
-        String folder = "data/mnist/";
-        String trainImages = findIdxFile(folder + "train-images-idx3-ubyte");
-        String trainLabels = findIdxFile(folder + "train-labels-idx1-ubyte");
-        String testImages = findIdxFile(folder + "t10k-images-idx3-ubyte");
-        String testLabels = findIdxFile(folder + "t10k-labels-idx1-ubyte");
-
-        if(trainImages == null || trainLabels == null || testImages == null || testLabels == null){
-            System.out.println("MNIST files not found in " + folder);
-            System.out.println("see " + folder + "README.txt for the names of the four files");
-            System.out.println();
+        String[] files = findMnistFiles();
+        if(files == null){
             return;
         }
 
         long loadStart = System.nanoTime();
-        Dataset train = DatasetLoader.fromIdx(trainImages, trainLabels, trainLimit, 10);
-        Dataset test = DatasetLoader.fromIdx(testImages, testLabels, 0, 10);
+        Dataset train = DatasetLoader.fromIdx(files[0], files[1], trainLimit, 10);
+        Dataset test = DatasetLoader.fromIdx(files[2], files[3], 0, 10);
         double loadSeconds = (System.nanoTime() - loadStart) / 1e9;
         System.out.println(String.format(Locale.US, "loaded %d training and %d test images in %.1fs", train.size(), test.size(), loadSeconds));
 
@@ -220,6 +227,9 @@ public class Main{
         TrainingHistory history = trainer.train(train, test, epochs, 64, 1);
         history.saveCsv("results/mnist_history.csv");
 
+        ModelIO.save(net, MODEL_PATH);
+        System.out.println("model saved to " + MODEL_PATH);
+
         int best = history.bestValidationEpoch();
         System.out.println(String.format(Locale.US, "best test accuracy %.2f%% at epoch %d", 100 * history.getValidationAccuracy(best), best + 1));
 
@@ -228,6 +238,66 @@ public class Main{
         System.out.print(matrix.format(test.getClassNames()));
         System.out.print(matrix.report(test.getClassNames()));
         System.out.println();
+    }
+
+    private static void evalDemo(String[] args){
+        System.out.println("== 6. evaluate a saved model ==");
+
+        String modelPath = args.length > 1 ? args[1] : MODEL_PATH;
+        if(!new File(modelPath).exists()){
+            System.out.println("model file " + modelPath + " not found, create it with: Main mnist");
+            System.out.println();
+            return;
+        }
+
+        String[] files = findMnistFiles();
+        if(files == null){
+            return;
+        }
+
+        NeuralNetwork net = ModelIO.load(modelPath);
+        System.out.print(net.summary());
+        Dataset test = DatasetLoader.fromIdx(files[2], files[3], 0, 10);
+
+        Trainer trainer = new Trainer(net, new CrossEntropy(), new SGD(0.1), new Random(1));
+        Evaluation result = trainer.evaluate(test);
+        System.out.println(String.format(Locale.US, "test loss %.4f   accuracy %.2f%%", result.getLoss(), 100 * result.getAccuracy()));
+
+        double top3 = Metrics.topKAccuracy(net.forward(test.getFeatures()), test.getLabels(), 3);
+        System.out.println(String.format(Locale.US, "top-3 accuracy %.2f%%", 100 * top3));
+
+        ConfusionMatrix matrix = ConfusionMatrix.of(test.getLabels(), result.getPredictions(), test.classCount());
+        System.out.print(matrix.format(test.getClassNames()));
+        System.out.print(matrix.report(test.getClassNames()));
+        System.out.print(matrix.formatMostConfused(test.getClassNames(), 5));
+        System.out.println();
+    }
+
+    private static void guiDemo(String[] args){
+        String modelPath = args.length > 1 ? args[1] : MODEL_PATH;
+        if(!new File(modelPath).exists()){
+            System.out.println("model file " + modelPath + " not found, create it with: Main mnist");
+            return;
+        }
+        DigitApp.launch(modelPath);
+    }
+
+    private static String[] findMnistFiles(){
+        String[] files = {
+            findIdxFile(MNIST_FOLDER + "train-images-idx3-ubyte"),
+            findIdxFile(MNIST_FOLDER + "train-labels-idx1-ubyte"),
+            findIdxFile(MNIST_FOLDER + "t10k-images-idx3-ubyte"),
+            findIdxFile(MNIST_FOLDER + "t10k-labels-idx1-ubyte")
+        };
+        for(String file : files){
+            if(file == null){
+                System.out.println("MNIST files not found in " + MNIST_FOLDER);
+                System.out.println("see " + MNIST_FOLDER + "README.txt for the names of the four files");
+                System.out.println();
+                return null;
+            }
+        }
+        return files;
     }
 
     private static String findIdxFile(String basePath){

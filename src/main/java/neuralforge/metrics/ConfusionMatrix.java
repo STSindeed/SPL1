@@ -1,5 +1,9 @@
 package neuralforge.metrics;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 
 public class ConfusionMatrix{
@@ -175,6 +179,55 @@ public class ConfusionMatrix{
                 classNames[c], precision(c), recall(c), f1(c), support(c)));
         }
         sb.append(String.format(Locale.US, "accuracy %.4f   macro f1 %.4f   samples %d\n", accuracy(), macroF1(), total));
+        return sb.toString();
+    }
+
+    public int[][] mostConfused(int limit){
+        if(limit < 0){
+            throw new IllegalArgumentException("limit cannot be negative, got " + limit);
+        }
+
+        List<int[]> mistakes = new ArrayList<>();
+        for(int a = 0; a < classCount; a++){
+            for(int p = 0; p < classCount; p++){
+                if(a != p && counts[a][p] > 0){
+                    mistakes.add(new int[]{a, p, counts[a][p]});
+                }
+            }
+        }
+
+        Collections.sort(mistakes, new Comparator<int[]>(){
+            @Override
+            public int compare(int[] x, int[] y){
+                if(x[2] != y[2]){
+                    return y[2] - x[2];
+                }
+                if(x[0] != y[0]){
+                    return x[0] - y[0];
+                }
+                return x[1] - y[1];
+            }
+        });
+
+        int n = Math.min(limit, mistakes.size());
+        int[][] result = new int[n][];
+        for(int i = 0; i < n; i++){
+            result[i] = mistakes.get(i);
+        }
+        return result;
+    }
+
+    public String formatMostConfused(String[] classNames, int limit){
+        checkNames(classNames);
+        int[][] mistakes = mostConfused(limit);
+        if(mistakes.length == 0){
+            return "no mistakes\n";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("most common mistakes (actual -> predicted)\n");
+        for(int[] m : mistakes){
+            sb.append(String.format("  %s -> %s  %d times\n", classNames[m[0]], classNames[m[1]], m[2]));
+        }
         return sb.toString();
     }
 

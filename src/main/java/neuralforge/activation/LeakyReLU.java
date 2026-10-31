@@ -27,6 +27,10 @@ public class LeakyReLU implements Activation{
         return gradOutput.hadamard(derivative);
     }
 
+    public double getSlope(){
+        return slope;
+    }
+
     @Override
     public String name(){
         return "leaky_relu";
