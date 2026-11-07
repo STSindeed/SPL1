@@ -1,34 +1,35 @@
 package neuralforge.optimizer;
 
-import neuralforge.layer.DenseLayer;
+import neuralforge.math.Matrix;
+import neuralforge.schedule.ConstantRate;
+import neuralforge.schedule.LearningRateSchedule;
 
-public class SGD implements Optimizer{
-
-    private final double learningRate;
+public class SGD extends BaseOptimizer{
 
     public SGD(double learningRate){
-        if(learningRate <= 0){
-            throw new IllegalArgumentException("learning rate must be positive, got " + learningRate);
-        }
-        this.learningRate = learningRate;
+        this(new ConstantRate(learningRate));
+    }
+
+    public SGD(LearningRateSchedule schedule){
+        super(schedule);
     }
 
     @Override
-    public void update(DenseLayer layer){
-        if(layer.getGradWeights() == null || layer.getGradBiases() == null){
-            throw new IllegalStateException("no gradients yet, call backward() before update()");
-        }
+    protected int bufferCount(){
+        return 0;
+    }
 
-        layer.getWeights().addScaledInPlace(layer.getGradWeights(), -learningRate);
-        layer.getBiases().addScaledInPlace(layer.getGradBiases(), -learningRate);
+    @Override
+    protected void applyUpdate(Matrix param, Matrix grad, Matrix[] buffers, int step, double rate){
+        param.addScaledInPlace(grad, -rate);
     }
 
     public double getLearningRate(){
-        return learningRate;
+        return learningRate();
     }
 
     @Override
     public String name(){
-        return "sgd(lr=" + learningRate + ")";
+        return "sgd(" + rateText() + ")";
     }
 }

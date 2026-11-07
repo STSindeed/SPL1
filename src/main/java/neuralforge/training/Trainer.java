@@ -50,6 +50,9 @@ public class Trainer{
         for(int epoch = 0; epoch < epochs; epoch++){
             long startTime = System.nanoTime();
 
+            optimizer.startEpoch(epoch);
+            double rate = optimizer.learningRate();
+
             Shuffler.shuffle(order, rng);
 
             double lossSum = 0.0;
@@ -85,11 +88,11 @@ public class Trainer{
             }
 
             double seconds = (System.nanoTime() - startTime) / 1e9;
-            history.record(epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds);
+            history.record(epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds, rate);
 
             boolean lastEpoch = epoch == epochs - 1;
             if(printEvery > 0 && ((epoch + 1) % printEvery == 0 || lastEpoch)){
-                printEpoch(epoch + 1, epochs, epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds);
+                printEpoch(epoch + 1, epochs, rate, epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds);
             }
         }
         return history;
@@ -141,9 +144,14 @@ public class Trainer{
         }
     }
 
-    private static void printEpoch(int epoch, int epochs, double loss, double accuracy, double validationLoss, double validationAccuracy, double seconds){
+    private static void printEpoch(int epoch, int epochs, double rate, double loss, double accuracy, double validationLoss, double validationAccuracy, double seconds){
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format(Locale.US, "epoch %3d/%d  train loss %.4f acc %6.2f%%", epoch, epochs, loss, 100 * accuracy));
+        sb.append(String.format(Locale.US, "epoch %3d/%d", epoch, epochs));
+
+        if(!Double.isNaN(rate)){
+            sb.append(String.format(Locale.US, "  lr %.2e", rate));
+        }
+        sb.append(String.format(Locale.US, "  train loss %.4f acc %6.2f%%", loss, 100 * accuracy));
         if(!Double.isNaN(validationLoss)){
             sb.append(String.format(Locale.US, "  |  test loss %.4f acc %6.2f%%", validationLoss, 100 * validationAccuracy));
         }

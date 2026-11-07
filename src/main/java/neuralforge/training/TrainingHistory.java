@@ -16,6 +16,7 @@ public class TrainingHistory{
     private final double[] validationLoss;
     private final double[] validationAccuracy;
     private final double[] seconds;
+    private final double[] learningRate;
     private int count = 0;
 
     public TrainingHistory(int maxEpochs){
@@ -27,9 +28,14 @@ public class TrainingHistory{
         validationLoss = new double[maxEpochs];
         validationAccuracy = new double[maxEpochs];
         seconds = new double[maxEpochs];
+        learningRate = new double[maxEpochs];
     }
 
     public void record(double trainLoss, double trainAccuracy, double validationLoss, double validationAccuracy, double seconds){
+        record(trainLoss, trainAccuracy, validationLoss, validationAccuracy, seconds, Double.NaN);
+    }
+
+    public void record(double trainLoss, double trainAccuracy, double validationLoss, double validationAccuracy, double seconds, double learningRate){
         if(count == this.trainLoss.length){
             throw new IllegalStateException("history is full");
         }
@@ -38,6 +44,7 @@ public class TrainingHistory{
         this.validationLoss[count] = validationLoss;
         this.validationAccuracy[count] = validationAccuracy;
         this.seconds[count] = seconds;
+        this.learningRate[count] = learningRate;
         count++;
     }
 
@@ -70,6 +77,20 @@ public class TrainingHistory{
         return seconds[epoch];
     }
 
+    public double getLearningRate(int epoch){
+        checkEpoch(epoch);
+        return learningRate[epoch];
+    }
+
+    public int firstEpochReaching(double accuracy){
+        for(int i = 0; i < count; i++){
+            if(!Double.isNaN(validationAccuracy[i]) && validationAccuracy[i] >= accuracy){
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
     public int bestValidationEpoch(){
         int best = -1;
         for(int i = 0; i < count; i++){
@@ -91,16 +112,23 @@ public class TrainingHistory{
                 Files.createDirectories(folder);
             }
             try(BufferedWriter out = Files.newBufferedWriter(file, StandardCharsets.UTF_8)){
-                out.write("epoch,train_loss,train_accuracy,validation_loss,validation_accuracy,seconds\n");
+                out.write("epoch,learning_rate,train_loss,train_accuracy,validation_loss,validation_accuracy,seconds\n");
                 for(int i = 0; i < count; i++){
-                    out.write(String.format(Locale.US, "%d,%.6f,%.6f,%s,%s,%.3f\n",
-                        i + 1, trainLoss[i], trainAccuracy[i],
+                    out.write(String.format(Locale.US, "%d,%s,%.6f,%.6f,%s,%s,%.3f\n",
+                        i + 1, rateCell(learningRate[i]), trainLoss[i], trainAccuracy[i],
                         cell(validationLoss[i]), cell(validationAccuracy[i]), seconds[i]));
                 }
             }
         }catch(IOException e){
             throw new UncheckedIOException("could not write " + path + ": " + e.getMessage(), e);
         }
+    }
+
+    private static String rateCell(double value){
+        if(Double.isNaN(value)){
+            return "";
+        }
+        return String.format(Locale.US, "%.8f", value);
     }
 
     private static String cell(double value){
