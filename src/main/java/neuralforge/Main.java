@@ -6,6 +6,7 @@ import neuralforge.activation.Softmax;
 import neuralforge.activation.Tanh;
 import neuralforge.data.Dataset;
 import neuralforge.data.DatasetLoader;
+import neuralforge.experiment.OptimizerComparison;
 import neuralforge.gradcheck.GradientChecker;
 import neuralforge.gui.DigitApp;
 import neuralforge.init.HeInitializer;
@@ -18,18 +19,29 @@ import neuralforge.math.Matrix;
 import neuralforge.metrics.ConfusionMatrix;
 import neuralforge.metrics.Metrics;
 import neuralforge.network.NeuralNetwork;
+import neuralforge.optimizer.Optimizer;
+import neuralforge.optimizer.OptimizerFactory;
 import neuralforge.optimizer.SGD;
 import neuralforge.preprocess.StandardScaler;
+import neuralforge.schedule.LearningRateSchedule;
+import neuralforge.schedule.ScheduleFactory;
 import neuralforge.training.Evaluation;
 import neuralforge.training.Trainer;
 import neuralforge.training.TrainingHistory;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Random;
+import java.util.function.Supplier;
 
 public class Main{
 
-    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs]] | eval [modelFile] | gui [modelFile]]";
+    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs [optimizer [schedule]]]]\n"
+        + "                  | optimizers [iris | mnist [trainLimit [epochs]]] | decay [trainLimit [epochs [optimizer [startRate]]]]\n"
+        + "                  | eval [modelFile] | gui [modelFile]]\n"
+        + "optimizers: sgd, momentum, nesterov, rmsprop, adam\n"
+        + "schedules: constant, step, exp, inverse, cosine";
 
     private static final String MODEL_PATH = "models/mnist.nfm";
 
@@ -61,6 +73,14 @@ public class Main{
         }
         if(mode.equals("mnist")){
             mnistDemo(args);
+            known = true;
+        }
+        if(mode.equals("optimizers")){
+            optimizersDemo(args);
+            known = true;
+        }
+        if(mode.equals("decay")){
+            decayDemo(args);
             known = true;
         }
         if(mode.equals("eval")){
@@ -160,17 +180,10 @@ public class Main{
             return;
         }
 
-        Dataset all = DatasetLoader.fromCsv(path, true, -1);
-        System.out.print(all.describe());
-
         Random rng = new Random(42);
-
-        Dataset[] parts = all.stratifiedSplit(0.2, rng);
-
-        StandardScaler scaler = new StandardScaler();
-        Dataset train = parts[0].withFeatures(scaler.fitTransform(parts[0].getFeatures()));
-        Dataset test = parts[1].withFeatures(scaler.transform(parts[1].getFeatures()));
-        System.out.println("train: " + train.size() + " samples, test: " + test.size() + " samples");
+        Dataset[] parts = prepareIris(rng);
+        Dataset train = parts[0];
+        Dataset test = parts[1];
 
         NeuralNetwork net = new NeuralNetwork();
         net.addLayer(new DenseLayer(train.featureCount(), 8, new ReLU(), new HeInitializer(), rng));
@@ -188,6 +201,19 @@ public class Main{
         System.out.println();
     }
 
+    private static Dataset[] prepareIris(Random rng){
+        Dataset all = DatasetLoader.fromCsv("data/iris.csv", true, -1);
+        System.out.print(all.describe());
+
+        Dataset[] parts = all.stratifiedSplit(0.2, rng);
+
+        StandardScaler scaler = new StandardScaler();
+        Dataset train = parts[0].withFeatures(scaler.fitTransform(parts[0].getFeatures()));
+        Dataset test = parts[1].withFeatures(scaler.transform(parts[1].getFeatures()));
+        System.out.println("train: " + train.size() + " samples, test: " + test.size() + " samples");
+        return new Dataset[]{train, test};
+    }
+
     private static void mnistDemo(String[] args){
         System.out.println("== 5. mnist ==");
 
@@ -201,6 +227,19 @@ public class Main{
                 epochs = Integer.parseInt(args[2]);
             }
         }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+
+        String optimizerName = args.length > 3 ? args[3] : "sgd";
+        String scheduleName = args.length > 4 ? args[4] : "constant";
+        Optimizer optimizer;
+        try{
+            double rate = OptimizerFactory.defaultRate(optimizerName);
+            LearningRateSchedule schedule = ScheduleFactory.create(scheduleName, rate, epochs);
+            optimizer = OptimizerFactory.create(optimizerName, schedule);
+        }catch(IllegalArgumentException e){
+            System.out.println(e.getMessage());
             System.out.println(USAGE);
             return;
         }
@@ -223,7 +262,8 @@ public class Main{
         net.addLayer(new DenseLayer(128, train.classCount(), new Softmax(), new XavierInitializer(), rng));
         System.out.print(net.summary());
 
-        Trainer trainer = new Trainer(net, new CrossEntropy(), new SGD(0.1), rng);
+        System.out.println("optimizer: " + optimizer.name());
+        Trainer trainer = new Trainer(net, new CrossEntropy(), optimizer, rng);
         TrainingHistory history = trainer.train(train, test, epochs, 64, 1);
         history.saveCsv("results/mnist_history.csv");
 
@@ -240,8 +280,127 @@ public class Main{
         System.out.println();
     }
 
+    private static void optimizersDemo(String[] args){
+        System.out.println("== 6. optimizers ==");
+
+        String data = args.length > 1 ? args[1].toLowerCase() : "mnist";
+        int trainLimit = 10000;
+        int epochs = data.equals("iris") ? 60 : 5;
+        try{
+            if(args.length > 2){
+                trainLimit = Integer.parseInt(args[2]);
+            }
+            if(args.length > 3){
+                epochs = Integer.parseInt(args[3]);
+            }
+        }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+
+        List<Optimizer> optimizers = new ArrayList<>();
+        for(String name : OptimizerFactory.names()){
+            optimizers.add(OptimizerFactory.create(name));
+        }
+        String[] labels = OptimizerFactory.names();
+
+        if(data.equals("iris")){
+            if(!new File("data/iris.csv").exists()){
+                System.out.println("file data/iris.csv not found, run the program from the project folder");
+                return;
+            }
+            Dataset[] parts = prepareIris(new Random(42));
+
+            Supplier<NeuralNetwork> iris = () -> {
+                Random rng = new Random(7);
+                NeuralNetwork net = new NeuralNetwork();
+                net.addLayer(new DenseLayer(4, 8, new ReLU(), new HeInitializer(), rng));
+                net.addLayer(new DenseLayer(8, 3, new Softmax(), new XavierInitializer(), rng));
+                return net;
+            };
+            compare(iris, parts[0], parts[1], optimizers, labels, epochs, 16, 0.9);
+            return;
+        }
+
+        String[] files = findMnistFiles();
+        if(files == null){
+            return;
+        }
+        Dataset train = DatasetLoader.fromIdx(files[0], files[1], trainLimit, 10);
+        Dataset test = DatasetLoader.fromIdx(files[2], files[3], 0, 10);
+        System.out.println(train.size() + " training images, " + test.size() + " test images, " + epochs + " epochs");
+
+        compare(mnistNetwork(), train, test, optimizers, labels, epochs, 64, 0.92);
+    }
+
+    private static void decayDemo(String[] args){
+        System.out.println("== 7. learning rate decay ==");
+
+        int trainLimit = 10000;
+        int epochs = 10;
+
+        String optimizerName = args.length > 3 ? args[3] : "adam";
+        double rate;
+        try{
+            if(args.length > 1){
+                trainLimit = Integer.parseInt(args[1]);
+            }
+            if(args.length > 2){
+                epochs = Integer.parseInt(args[2]);
+            }
+            rate = args.length > 4 ? Double.parseDouble(args[4]) : 0.01;
+        }catch(IllegalArgumentException e){
+            System.out.println(e.getMessage());
+            System.out.println(USAGE);
+            return;
+        }
+
+        String[] labels = ScheduleFactory.names();
+        LearningRateSchedule[] schedules = new LearningRateSchedule[labels.length];
+        List<Optimizer> optimizers = new ArrayList<>();
+        for(int i = 0; i < labels.length; i++){
+            schedules[i] = ScheduleFactory.create(labels[i], rate, epochs);
+            optimizers.add(OptimizerFactory.create(optimizerName, schedules[i]));
+        }
+
+        System.out.println(optimizerName + ", learning rate in every epoch, starting at " + rate);
+        System.out.print(OptimizerComparison.formatRates(labels, schedules, epochs));
+        System.out.println();
+
+        String[] files = findMnistFiles();
+        if(files == null){
+            return;
+        }
+        Dataset train = DatasetLoader.fromIdx(files[0], files[1], trainLimit, 10);
+        Dataset test = DatasetLoader.fromIdx(files[2], files[3], 0, 10);
+        System.out.println(optimizerName + " on " + train.size() + " training images, " + epochs + " epochs");
+
+        compare(mnistNetwork(), train, test, optimizers, labels, epochs, 64, 0.92);
+    }
+
+    private static void compare(Supplier<NeuralNetwork> network, Dataset train, Dataset test, List<Optimizer> optimizers,
+                                String[] labels, int epochs, int batchSize, double target){
+        List<OptimizerComparison.Result> results = OptimizerComparison.run(network, train, test, optimizers, labels, epochs, batchSize, 2026);
+        System.out.println();
+        System.out.print(OptimizerComparison.formatTable(results, target));
+        System.out.println();
+        System.out.println("training loss after every epoch");
+        System.out.print(OptimizerComparison.formatLossCurves(results));
+        System.out.println();
+    }
+
+    private static Supplier<NeuralNetwork> mnistNetwork(){
+        return () -> {
+            Random rng = new Random(2026);
+            NeuralNetwork net = new NeuralNetwork();
+            net.addLayer(new DenseLayer(784, 128, new ReLU(), new HeInitializer(), rng));
+            net.addLayer(new DenseLayer(128, 10, new Softmax(), new XavierInitializer(), rng));
+            return net;
+        };
+    }
+
     private static void evalDemo(String[] args){
-        System.out.println("== 6. evaluate a saved model ==");
+        System.out.println("== 8. evaluate a saved model ==");
 
         String modelPath = args.length > 1 ? args[1] : MODEL_PATH;
         if(!new File(modelPath).exists()){
