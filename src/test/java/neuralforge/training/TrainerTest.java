@@ -10,11 +10,14 @@ import neuralforge.layer.DenseLayer;
 import neuralforge.loss.CrossEntropy;
 import neuralforge.math.Matrix;
 import neuralforge.network.NeuralNetwork;
+import neuralforge.optimizer.Optimizer;
 import neuralforge.optimizer.SGD;
+import neuralforge.schedule.StepDecay;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import static neuralforge.TestHelper.*;
@@ -29,6 +32,9 @@ public class TrainerTest{
         testPredictionsMatchNetwork();
         testShapeChecks();
         testHistory();
+        testBestEpochAndTargets();
+        testScheduleIsFollowed();
+        testStartEpochIsCalled();
         testSaveCsv();
         finish();
     }
@@ -58,7 +64,11 @@ public class TrainerTest{
     }
 
     private static Trainer trainer(NeuralNetwork net, long seed){
-        return new Trainer(net, new CrossEntropy(), new SGD(0.1), new Random(seed));
+        return trainer(net, new SGD(0.1), seed);
+    }
+
+    private static Trainer trainer(NeuralNetwork net, Optimizer optimizer, long seed){
+        return new Trainer(net, new CrossEntropy(), optimizer, new Random(seed));
     }
 
     private static void testTrainingLearns(){
@@ -150,10 +160,82 @@ public class TrainerTest{
     private static void testHistory(){
         TrainingHistory history = new TrainingHistory(1);
         history.record(1.0, 0.5, Double.NaN, Double.NaN, 0.1);
+        check("rate is NaN when it was not given", Double.isNaN(history.getLearningRate(0)));
         expectThrows("history is full", () -> history.record(1.0, 0.5, 1.0, 0.5, 0.1));
         expectThrows("epoch too big", () -> history.getTrainLoss(1));
         expectThrows("negative epoch", () -> history.getTrainLoss(-1));
         expectThrows("no room for epochs", () -> new TrainingHistory(0));
+    }
+
+    private static void testBestEpochAndTargets(){
+        TrainingHistory history = new TrainingHistory(5);
+        history.record(1.0, 0.5, 1.0, 0.60, 0.1, 0.1);
+        history.record(0.8, 0.6, 0.9, 0.70, 0.1, 0.1);
+        history.record(0.6, 0.7, 0.8, 0.90, 0.1, 0.05);
+        history.record(0.5, 0.8, 0.8, 0.90, 0.1, 0.05);
+        history.record(0.4, 0.9, 0.9, 0.80, 0.1, 0.025);
+
+        check("learning rate is stored", history.getLearningRate(0) == 0.1 && history.getLearningRate(4) == 0.025);
+        check("first epoch above 65%", history.firstEpochReaching(0.65) == 2);
+        check("first epoch with exactly 90%", history.firstEpochReaching(0.90) == 3);
+        check("target never reached", history.firstEpochReaching(0.95) == -1);
+
+        TrainingHistory noValidation = new TrainingHistory(2);
+        noValidation.record(1.0, 0.5, Double.NaN, Double.NaN, 0.1);
+        check("no validation, no epoch", noValidation.firstEpochReaching(0.1) == -1);
+    }
+
+    private static void testScheduleIsFollowed(){
+        Dataset data = blobs(20, 20);
+        Optimizer optimizer = new SGD(new StepDecay(0.1, 0.5, 2));
+        TrainingHistory history = trainer(network(21), optimizer, 22).train(data, null, 5, 8, 0);
+
+        check("epochs 1 and 2 use the start rate", history.getLearningRate(0) == 0.1 && history.getLearningRate(1) == 0.1);
+        check("epochs 3 and 4 use half", near(history.getLearningRate(2), 0.05, 1e-15) && near(history.getLearningRate(3), 0.05, 1e-15));
+        check("epoch 5 uses a quarter", near(history.getLearningRate(4), 0.025, 1e-15));
+    }
+
+    private static void testStartEpochIsCalled(){
+        final List<Integer> seen = new ArrayList<>();
+        final SGD inner = new SGD(0.1);
+        Optimizer recorder = new Optimizer(){
+            @Override
+            public void update(neuralforge.layer.DenseLayer layer){
+                inner.update(layer);
+            }
+
+            @Override
+            public String name(){
+                return "recorder";
+            }
+
+            @Override
+            public void startEpoch(int epoch){
+                seen.add(epoch);
+            }
+
+            @Override
+            public double learningRate(){
+                return 0.1;
+            }
+        };
+
+        trainer(network(23), recorder, 24).train(blobs(10, 25), null, 4, 8, 0);
+        check("startEpoch called once per epoch, in order", seen.equals(java.util.Arrays.asList(0, 1, 2, 3)));
+
+        Optimizer plain = new Optimizer(){
+            @Override
+            public void update(neuralforge.layer.DenseLayer layer){
+                inner.update(layer);
+            }
+
+            @Override
+            public String name(){
+                return "plain";
+            }
+        };
+        TrainingHistory history = trainer(network(26), plain, 27).train(blobs(10, 28), null, 2, 8, 0);
+        check("unknown rate is NaN in the history", Double.isNaN(history.getLearningRate(0)));
     }
 
     private static void testSaveCsv(){
@@ -166,10 +248,11 @@ public class TrainerTest{
             List<String> lines = Files.readAllLines(Paths.get(path), StandardCharsets.UTF_8);
 
             check("header and one line per epoch", lines.size() == 4);
-            check("header", lines.get(0).startsWith("epoch,train_loss"));
+            check("header", lines.get(0).startsWith("epoch,learning_rate,train_loss"));
             check("first epoch", lines.get(1).startsWith("1,"));
-            check("validation cells are empty", lines.get(1).split(",", -1)[3].isEmpty());
-            check("six columns", lines.get(1).split(",", -1).length == 6);
+            check("learning rate column", lines.get(1).split(",", -1)[1].equals("0.10000000"));
+            check("validation cells are empty", lines.get(1).split(",", -1)[4].isEmpty() && lines.get(1).split(",", -1)[5].isEmpty());
+            check("seven columns", lines.get(1).split(",", -1).length == 7);
         }catch(IOException e){
             check("could not read the csv back: " + e.getMessage(), false);
         }
