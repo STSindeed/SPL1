@@ -1,0 +1,16 @@
+# compiled classes made by build.sh / build.bat
+out/
+
+# files written by the demos (loss curves of the training runs)
+results/
+
+# the MNIST files are big (about 55 MB), only the README that explains them is kept
+data/mnist/*
+!data/mnist/README.txt
+
+# temporary file that exists for a moment while a model is being saved
+*.nfm.tmp
+
+# files that the operating system adds
+.DS_Store
+Thumbs.db
