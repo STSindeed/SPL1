@@ -20,8 +20,13 @@ window where you draw a digit and the network tells you which digit it is.
   memory keep their own numbers for every weight between two updates.
 - **Learning rate schedules:** constant, step, exponential, inverse-time and cosine
   decay
+- **Regularization against overfitting:** L2 weight decay, dropout on the hidden
+  layers (inverted dropout, so nothing changes at prediction time) and early
+  stopping that goes back to the weights of the best epoch
 - **Optimizer comparison:** trains the same network from the same starting weights
   with every optimizer and prints the results side by side
+- **Regularization comparison:** trains the same network with L2, dropout and early
+  stopping, alone and together, and shows the train/test gap and the validation loss
 - **Data pipeline:** CSV reader (quoted fields, missing values), label encoder,
   stratified train/test split, standard and min-max scalers, IDX reader for MNIST
   (plain or `.gz`)
@@ -70,14 +75,22 @@ to a bigger value, for example `JAVA_OPTS=-Xmx4g ./build.sh run mnist`
 | `run xor`                                 | learns XOR, which a single layer cannot do                           |                    |
 | `run blobs`                               | classifies three groups of random points                             |                    |
 | `run iris`                                | whole pipeline on a CSV file: load, split, scale, train, evaluate    | `data/iris.csv`    |
-| `run mnist [n [e [optimizer [schedule]]]]`| trains on `n` images (0 = all 60000) for `e` epochs                  | MNIST files        |
+| `run mnist [n [e [optimizer [schedule [l2 [dropout [patience]]]]]]]` | trains on `n` images (0 = all 60000) for `e` epochs | MNIST files |
 | `run optimizers [iris or mnist [n [e]]]`  | trains with every optimizer and prints a comparison table            | iris or MNIST      |
 | `run decay [n [e [optimizer [rate]]]]`    | trains with every learning rate schedule and prints a table          | MNIST files        |
+| `run regularize [n [e [l2 [dropout [patience]]]]]` | trains with L2, dropout and early stopping and prints a comparison table | MNIST files |
 | `run eval [file]`                         | loads a saved model and measures it on the 10000 test images         | MNIST files, model |
 | `run gui [file]`                          | opens the window where you draw a digit                              | model              |
 
 Optimizers: `sgd`, `momentum`, `nesterov`, `rmsprop`, `adam`.
 Schedules: `constant`, `step`, `exp`, `inverse`, `cosine`.
+
+The last three arguments of `mnist` switch on regularization: `l2` is the strength of
+the L2 penalty (for example 0.001), `dropout` the share of hidden neurons that is
+switched off in every step (for example 0.3) and `patience` the number of epochs without
+improvement before early stopping ends the training. With `patience` above 0, 10% of the
+training images are held back for early stopping to watch, so the test images stay
+untouched and the final test accuracy is honest.
 
 `mnist` without arguments trains on all 60000 images for 5 epochs with `sgd` and a
 constant rate of 0.1. The other optimizers start with their usual rates (0.02 for
@@ -118,13 +131,18 @@ the content of the file and not at its name. See `data/mnist/README.txt`.
 
     ./build.sh test
 
-runs all 26 test classes. They use a small test runner of our own
+runs all 30 test classes. They use a small test runner of our own
 (`TestHelper`), no JUnit. Every class prints how many checks passed and failed.
 The script runs all classes even if one fails, lists the failed ones at the end
 and exits with an error.
 
 The optimizer tests check every update rule against numbers worked out by hand,
 and check that every optimizer really learns a simple function.
+
+The regularization tests check the dropout mask (values, share of dropped neurons,
+average output), the dropout gradient against a numerical gradient with a fixed mask,
+the L2 penalty and its gradient (also through the gradient checker), and the early
+stopping rule with made-up loss curves, including restoring the best weights.
 
 ## Folder layout
 
@@ -141,7 +159,7 @@ and check that every optimizer really learns a simple function.
         math/                               Matrix class
         activation/                         activation functions
         init/                               weight initialisers
-        layer/                              dense layer
+        layer/                              dense layer, with optional dropout
         loss/                               loss functions
         optimizer/                          SGD, Momentum, RMSProp, Adam and a factory
         schedule/                           learning rate schedules
@@ -149,8 +167,8 @@ and check that every optimizer really learns a simple function.
         gradcheck/                          gradient checking
         data/                               CSV and IDX readers, Dataset, label encoder, split
         preprocess/                         standard and min-max scalers
-        training/                           training loop, evaluation, training history
-        experiment/                         comparison of optimizers and schedules
+        training/                           training loop, evaluation, history, early stopping
+        experiment/                         comparison of optimizers, schedules and regularization
         metrics/                            confusion matrix, top-k accuracy
         io/                                 saving and loading models
         gui/                                the digit recognizer window
@@ -165,6 +183,12 @@ and check that every optimizer really learns a simple function.
       -> Trainer: NeuralNetwork + loss + optimizer, mini-batches, every epoch measured
       -> Evaluation -> ConfusionMatrix, top-k accuracy
       -> ModelIO.save -> models/mnist.nfm -> ModelIO.load -> DigitApp (the window)
+
+While the trainer runs the mini-batches, the network is in training mode and dropout
+is active. Before every measurement on the validation or test data the trainer switches
+back to prediction mode, so measurements never depend on chance. After every epoch the
+early stopping rule looks at the validation loss, and when it gives up, the weights of the
+best epoch are put back.
 
 At the start of every epoch the trainer tells the optimizer which epoch begins, so
 an optimizer with a learning rate schedule can switch to the rate of that epoch.
@@ -221,6 +245,26 @@ a few tenths of a percent should not be over-read.
 (The second column was made with `run decay 10000 10 nesterov 0.02`, the first with
 the defaults of `run decay`.)
 
+**Regularization** (`run regularize`: 1698 training, 302 validation and 10000 test images,
+784-256-10 network, Adam 0.001, up to 30 epochs, L2 0.003, dropout 0.4, patience 6):
+
+| Setup        | Epochs run | Train acc | Test acc | Gap    | Test loss |
+|--------------|------------|-----------|----------|--------|-----------|
+| none         | 30         | 100.00%   | 91.16%   | 8.84%  | 0.3317    |
+| l2           | 30         | 99.94%    | 90.84%   | 9.10%  | 0.3028    |
+| dropout      | 30         | 100.00%   | 91.73%   | 8.27%  | 0.2993    |
+| early        | 13         | 98.23%    | 90.32%   | 7.91%  | 0.3277    |
+| l2+dropout   | 30         | 99.65%    | 90.90%   | 8.75%  | 0.2971    |
+| all three    | 18         | 98.35%    | 90.44%   | 7.91%  | 0.3253    |
+
+Without regularization the validation loss is lowest at epoch 9 (0.2907) and then rises to
+0.3289 at epoch 30 while the training accuracy is already 100%, which is overfitting. L2
+and dropout keep the validation loss from rising and lower the test loss by about
+10%. The test accuracy changes by less than a point, which is within what a single run
+can vary, so it should not be over-read. Early stopping cuts the training time by more than
+half, but it watches the loss, and the accuracy was still creeping up slightly after the
+loss turned, so it ends a little lower here. These are single runs on a small training set.
+
 ## Known limits
 
 - Digits that are drawn small, off-center or in an unusual style are not always
@@ -228,11 +272,14 @@ the defaults of `run decay`.)
   does not do that yet.
 - Only dense layers. Training runs on one CPU thread.
 - The optimizer state is not saved with the model, so training cannot be resumed
-  exactly where it stopped.
+  exactly where it stopped. L2, dropout and early stopping are training settings only,
+  the model file holds weights and biases, nothing else.
+- L2 is added to the gradient (classic L2), which for Adam is not the same as the
+  decoupled weight decay of AdamW.
 
 ## Planned
 
-Regularization (L2, dropout, early stopping), more robust data handling
+More robust data handling
 (categorical columns, automatic task detection), a command line with `train`,
 `predict` and `evaluate`, hyperparameter search with cross-validation, faster
 matrix multiplication, a training report, and tests on more datasets.
