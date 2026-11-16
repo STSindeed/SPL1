@@ -7,6 +7,7 @@ import neuralforge.activation.Tanh;
 import neuralforge.data.Dataset;
 import neuralforge.data.DatasetLoader;
 import neuralforge.experiment.OptimizerComparison;
+import neuralforge.experiment.RegularizationComparison;
 import neuralforge.gradcheck.GradientChecker;
 import neuralforge.gui.DigitApp;
 import neuralforge.init.HeInitializer;
@@ -25,6 +26,7 @@ import neuralforge.optimizer.SGD;
 import neuralforge.preprocess.StandardScaler;
 import neuralforge.schedule.LearningRateSchedule;
 import neuralforge.schedule.ScheduleFactory;
+import neuralforge.training.EarlyStopping;
 import neuralforge.training.Evaluation;
 import neuralforge.training.Trainer;
 import neuralforge.training.TrainingHistory;
@@ -37,8 +39,9 @@ import java.util.function.Supplier;
 
 public class Main{
 
-    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs [optimizer [schedule]]]]\n"
+    private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs [optimizer [schedule [l2 [dropout [patience]]]]]]]\n"
         + "                  | optimizers [iris | mnist [trainLimit [epochs]]] | decay [trainLimit [epochs [optimizer [startRate]]]]\n"
+        + "                  | regularize [trainLimit [epochs [l2 [dropout [patience]]]]]\n"
         + "                  | eval [modelFile] | gui [modelFile]]\n"
         + "optimizers: sgd, momentum, nesterov, rmsprop, adam\n"
         + "schedules: constant, step, exp, inverse, cosine";
@@ -83,6 +86,10 @@ public class Main{
             decayDemo(args);
             known = true;
         }
+        if(mode.equals("regularize")){
+            regularizeDemo(args);
+            known = true;
+        }
         if(mode.equals("eval")){
             evalDemo(args);
             known = true;
@@ -113,6 +120,10 @@ public class Main{
 
         double worst = GradientChecker.check(net, new CrossEntropy(), x, y, true);
         System.out.println(String.format(Locale.US, "worst relative error: %.3e", worst));
+
+        net.setL2(0.1);
+        double worstWithL2 = GradientChecker.check(net, new CrossEntropy(), x, y, false);
+        System.out.println(String.format(Locale.US, "worst relative error with L2 0.1: %.3e", worstWithL2));
         System.out.println();
     }
 
@@ -219,6 +230,9 @@ public class Main{
 
         int trainLimit = 0;
         int epochs = 5;
+        double l2 = 0.0;
+        double dropout = 0.0;
+        int patience = 0;
         try{
             if(args.length > 1){
                 trainLimit = Integer.parseInt(args[1]);
@@ -226,7 +240,21 @@ public class Main{
             if(args.length > 2){
                 epochs = Integer.parseInt(args[2]);
             }
+            if(args.length > 5){
+                l2 = Double.parseDouble(args[5]);
+            }
+            if(args.length > 6){
+                dropout = Double.parseDouble(args[6]);
+            }
+            if(args.length > 7){
+                patience = Integer.parseInt(args[7]);
+            }
         }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+        if(l2 < 0.0 || !(dropout >= 0.0 && dropout < 1.0) || patience < 0){
+            System.out.println("l2 must be >= 0, dropout must be in [0, 1) and patience must be >= 0");
             System.out.println(USAGE);
             return;
         }
@@ -260,20 +288,37 @@ public class Main{
         NeuralNetwork net = new NeuralNetwork();
         net.addLayer(new DenseLayer(train.featureCount(), 128, new ReLU(), new HeInitializer(), rng));
         net.addLayer(new DenseLayer(128, train.classCount(), new Softmax(), new XavierInitializer(), rng));
+        net.setL2(l2);
+        if(dropout > 0.0){
+            net.enableDropout(dropout, new Random(2027));
+        }
         System.out.print(net.summary());
 
         System.out.println("optimizer: " + optimizer.name());
         Trainer trainer = new Trainer(net, new CrossEntropy(), optimizer, rng);
-        TrainingHistory history = trainer.train(train, test, epochs, 64, 1);
+
+        Dataset fitSet = train;
+        Dataset watchSet = test;
+        if(patience > 0){
+
+            Dataset[] split = train.stratifiedSplit(0.1, rng);
+            fitSet = split[0];
+            watchSet = split[1];
+            trainer.setEarlyStopping(new EarlyStopping(patience));
+            System.out.println("early stopping with patience " + patience + ", watching " + watchSet.size() + " held-back training images");
+        }
+        TrainingHistory history = trainer.train(fitSet, watchSet, epochs, 64, 1);
         history.saveCsv("results/mnist_history.csv");
 
         ModelIO.save(net, MODEL_PATH);
         System.out.println("model saved to " + MODEL_PATH);
 
         int best = history.bestValidationEpoch();
-        System.out.println(String.format(Locale.US, "best test accuracy %.2f%% at epoch %d", 100 * history.getValidationAccuracy(best), best + 1));
+        String watchedName = patience > 0 ? "validation" : "test";
+        System.out.println(String.format(Locale.US, "best %s accuracy %.2f%% at epoch %d", watchedName, 100 * history.getValidationAccuracy(best), best + 1));
 
         Evaluation result = trainer.evaluate(test);
+        System.out.println(String.format(Locale.US, "final test accuracy %.2f%%", 100 * result.getAccuracy()));
         ConfusionMatrix matrix = ConfusionMatrix.of(test.getLabels(), result.getPredictions(), test.classCount());
         System.out.print(matrix.format(test.getClassNames()));
         System.out.print(matrix.report(test.getClassNames()));
@@ -376,6 +421,80 @@ public class Main{
         System.out.println(optimizerName + " on " + train.size() + " training images, " + epochs + " epochs");
 
         compare(mnistNetwork(), train, test, optimizers, labels, epochs, 64, 0.92);
+    }
+
+    private static void regularizeDemo(String[] args){
+        System.out.println("== 9. regularization ==");
+
+        int trainLimit = 2000;
+        int epochs = 30;
+        double l2 = 0.003;
+        double dropout = 0.4;
+        int patience = 6;
+        try{
+            if(args.length > 1){
+                trainLimit = Integer.parseInt(args[1]);
+            }
+            if(args.length > 2){
+                epochs = Integer.parseInt(args[2]);
+            }
+            if(args.length > 3){
+                l2 = Double.parseDouble(args[3]);
+            }
+            if(args.length > 4){
+                dropout = Double.parseDouble(args[4]);
+            }
+            if(args.length > 5){
+                patience = Integer.parseInt(args[5]);
+            }
+        }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+        if(trainLimit < 100 || epochs < 1 || l2 < 0.0 || !(dropout > 0.0 && dropout < 1.0) || patience < 1){
+            System.out.println("trainLimit must be at least 100, epochs and patience at least 1, l2 >= 0 and dropout in (0, 1)");
+            System.out.println(USAGE);
+            return;
+        }
+
+        String[] files = findMnistFiles();
+        if(files == null){
+            return;
+        }
+        Dataset all = DatasetLoader.fromIdx(files[0], files[1], trainLimit, 10);
+        Dataset test = DatasetLoader.fromIdx(files[2], files[3], 0, 10);
+
+        Dataset[] parts = all.stratifiedSplit(0.15, new Random(5));
+        Dataset train = parts[0];
+        Dataset validation = parts[1];
+        System.out.println(train.size() + " training, " + validation.size() + " validation and " + test.size() + " test images, up to " + epochs + " epochs");
+
+        Supplier<NeuralNetwork> network = () -> {
+            Random rng = new Random(2026);
+            NeuralNetwork net = new NeuralNetwork();
+            net.addLayer(new DenseLayer(784, 256, new ReLU(), new HeInitializer(), rng));
+            net.addLayer(new DenseLayer(256, 10, new Softmax(), new XavierInitializer(), rng));
+            return net;
+        };
+        Supplier<Optimizer> optimizer = () -> OptimizerFactory.create("adam");
+
+        List<RegularizationComparison.Setup> setups = new ArrayList<>();
+        setups.add(new RegularizationComparison.Setup("none", 0.0, 0.0, 0));
+        setups.add(new RegularizationComparison.Setup("l2", l2, 0.0, 0));
+        setups.add(new RegularizationComparison.Setup("dropout", 0.0, dropout, 0));
+        setups.add(new RegularizationComparison.Setup("early", 0.0, 0.0, patience));
+        setups.add(new RegularizationComparison.Setup("l2+dropout", l2, dropout, 0));
+        setups.add(new RegularizationComparison.Setup("all three", l2, dropout, patience));
+
+        List<RegularizationComparison.Result> results = RegularizationComparison.run(network, optimizer, train, validation, test, setups, epochs, 64, 2026);
+        System.out.println();
+        System.out.print(RegularizationComparison.formatSetups(results));
+        System.out.println();
+        System.out.print(RegularizationComparison.formatTable(results));
+        System.out.println();
+        System.out.println("validation loss while training");
+        System.out.print(RegularizationComparison.formatValidationLoss(results, Math.max(1, epochs / 10)));
+        System.out.println();
     }
 
     private static void compare(Supplier<NeuralNetwork> network, Dataset train, Dataset test, List<Optimizer> optimizers,

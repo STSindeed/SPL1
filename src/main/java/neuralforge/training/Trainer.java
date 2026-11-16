@@ -20,11 +20,21 @@ public class Trainer{
     private final Optimizer optimizer;
     private final Random rng;
 
+    private EarlyStopping earlyStopping;
+
     public Trainer(NeuralNetwork network, Loss loss, Optimizer optimizer, Random rng){
         this.network = network;
         this.loss = loss;
         this.optimizer = optimizer;
         this.rng = rng;
+    }
+
+    public void setEarlyStopping(EarlyStopping earlyStopping){
+        this.earlyStopping = earlyStopping;
+    }
+
+    public EarlyStopping getEarlyStopping(){
+        return earlyStopping;
     }
 
     public TrainingHistory train(Dataset trainSet, Dataset validationSet, int epochs, int batchSize, int printEvery){
@@ -34,6 +44,12 @@ public class Trainer{
         checkFits(trainSet);
         if(validationSet != null){
             checkFits(validationSet);
+        }
+        if(earlyStopping != null){
+            if(validationSet == null){
+                throw new IllegalArgumentException("early stopping watches the validation set, so a validation set is needed");
+            }
+            earlyStopping.reset();
         }
 
         int n = trainSet.size();
@@ -47,52 +63,76 @@ public class Trainer{
         int[] order = Shuffler.range(n);
         TrainingHistory history = new TrainingHistory(epochs);
 
-        for(int epoch = 0; epoch < epochs; epoch++){
-            long startTime = System.nanoTime();
+        try{
+            for(int epoch = 0; epoch < epochs; epoch++){
+                long startTime = System.nanoTime();
 
-            optimizer.startEpoch(epoch);
-            double rate = optimizer.learningRate();
+                optimizer.startEpoch(epoch);
+                double rate = optimizer.learningRate();
 
-            Shuffler.shuffle(order, rng);
+                Shuffler.shuffle(order, rng);
 
-            double lossSum = 0.0;
-            int correct = 0;
+                network.setTraining(true);
 
-            for(int start = 0; start < n; start += batchSize){
-                int end = Math.min(start + batchSize, n);
+                double lossSum = 0.0;
+                int correct = 0;
 
-                Matrix batchFeatures = features.selectRows(order, start, end);
-                Matrix batchTargets = targets.selectRows(order, start, end);
+                for(int start = 0; start < n; start += batchSize){
+                    int end = Math.min(start + batchSize, n);
 
-                double batchLoss = network.trainBatch(batchFeatures, batchTargets, loss, optimizer);
+                    Matrix batchFeatures = features.selectRows(order, start, end);
+                    Matrix batchTargets = targets.selectRows(order, start, end);
 
-                lossSum += batchLoss * (end - start);
+                    double batchLoss = network.trainBatch(batchFeatures, batchTargets, loss, optimizer);
 
-                int[] guessed = lastLayer.getLastOutput().argmaxRows();
-                for(int k = 0; k < guessed.length; k++){
-                    if(guessed[k] == labels[order[start + k]]){
-                        correct++;
+                    lossSum += batchLoss * (end - start);
+
+                    int[] guessed = lastLayer.getLastOutput().argmaxRows();
+                    for(int k = 0; k < guessed.length; k++){
+                        if(guessed[k] == labels[order[start + k]]){
+                            correct++;
+                        }
                     }
                 }
+
+                network.setTraining(false);
+
+                double epochLoss = lossSum / n;
+                double epochAccuracy = (double) correct / n;
+
+                double validationLoss = Double.NaN;
+                double validationAccuracy = Double.NaN;
+                if(validationSet != null){
+                    Evaluation result = evaluate(validationSet);
+                    validationLoss = result.getLoss();
+                    validationAccuracy = result.getAccuracy();
+                }
+
+                double seconds = (System.nanoTime() - startTime) / 1e9;
+                history.record(epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds, rate);
+
+                boolean lastEpoch = epoch == epochs - 1;
+                if(printEvery > 0 && ((epoch + 1) % printEvery == 0 || lastEpoch)){
+                    printEpoch(epoch + 1, epochs, rate, epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds);
+                }
+
+                if(earlyStopping != null && earlyStopping.update(epoch + 1, validationLoss, validationAccuracy, network)){
+                    if(printEvery > 0){
+                        System.out.println(String.format(Locale.US, "early stopping after epoch %d: no improvement for %d epochs, best epoch was %d",
+                            epoch + 1, earlyStopping.getPatience(), earlyStopping.getBestEpoch()));
+                    }
+                    break;
+                }
             }
+        }finally{
 
-            double epochLoss = lossSum / n;
-            double epochAccuracy = (double) correct / n;
+            network.setTraining(false);
+        }
 
-            double validationLoss = Double.NaN;
-            double validationAccuracy = Double.NaN;
-            if(validationSet != null){
-                Evaluation result = evaluate(validationSet);
-                validationLoss = result.getLoss();
-                validationAccuracy = result.getAccuracy();
-            }
+        if(earlyStopping != null && earlyStopping.restoreBest(network)){
 
-            double seconds = (System.nanoTime() - startTime) / 1e9;
-            history.record(epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds, rate);
-
-            boolean lastEpoch = epoch == epochs - 1;
-            if(printEvery > 0 && ((epoch + 1) % printEvery == 0 || lastEpoch)){
-                printEpoch(epoch + 1, epochs, rate, epochLoss, epochAccuracy, validationLoss, validationAccuracy, seconds);
+            if(printEvery > 0 && earlyStopping.getBestEpoch() != history.epochCount()){
+                System.out.println("weights of epoch " + earlyStopping.getBestEpoch() + " restored");
             }
         }
         return history;
@@ -100,6 +140,8 @@ public class Trainer{
 
     public Evaluation evaluate(Dataset data){
         checkFits(data);
+
+        network.setTraining(false);
 
         int n = data.size();
         Matrix features = data.getFeatures();

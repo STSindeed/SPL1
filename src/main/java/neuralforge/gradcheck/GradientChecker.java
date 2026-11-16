@@ -12,6 +12,7 @@ public class GradientChecker{
     private static final double H = 1e-5;
 
     public static double check(NeuralNetwork network, Loss loss, Matrix input, Matrix target, boolean verbose){
+
         network.computeGradients(input, target, loss);
 
         double worst = 0.0;
@@ -37,10 +38,10 @@ public class GradientChecker{
                 double original = parameter.get(i, j);
 
                 parameter.set(i, j, original + H);
-                double lossPlus = network.lossOf(input, target, loss);
+                double lossPlus = network.totalLossOf(input, target, loss);
 
                 parameter.set(i, j, original - H);
-                double lossMinus = network.lossOf(input, target, loss);
+                double lossMinus = network.totalLossOf(input, target, loss);
 
                 parameter.set(i, j, original);
 

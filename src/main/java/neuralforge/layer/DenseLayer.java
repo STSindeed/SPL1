@@ -3,6 +3,7 @@ package neuralforge.layer;
 import neuralforge.activation.Activation;
 import neuralforge.init.Initializer;
 import neuralforge.math.Matrix;
+import java.util.Locale;
 import java.util.Random;
 
 public class DenseLayer{
@@ -13,16 +14,27 @@ public class DenseLayer{
 
     private Matrix lastInput;
     private Matrix lastZ;
+
+    private Matrix lastActivation;
+
     private Matrix lastOutput;
 
     private Matrix gradWeights;
     private Matrix gradBiases;
+
+    private double dropoutRate = 0.0;
+    private Random dropoutRng;
+
+    private boolean training = false;
+
+    private Matrix lastMask;
 
     public DenseLayer(int inputSize, int outputSize, Activation activation, Initializer initializer, Random rng){
         this(initializer.createWeights(inputSize, outputSize, rng), Matrix.zeros(1, outputSize), activation);
     }
 
     public DenseLayer(Matrix weights, Matrix biases, Activation activation){
+
         if(biases.rows() != 1 || biases.cols() != weights.cols()){
             throw new IllegalArgumentException("biases must be 1x" + weights.cols() + " but they are " + biases.shape());
         }
@@ -38,12 +50,38 @@ public class DenseLayer{
 
         Matrix z = input.multiply(weights).addBias(biases);
 
-        Matrix output = activation.forward(z);
+        Matrix activated = activation.forward(z);
+
+        Matrix output = activated;
+        Matrix mask = null;
+        if(training && dropoutRate > 0.0){
+
+            mask = makeDropoutMask(activated.rows(), activated.cols());
+            output = activated.hadamard(mask);
+        }
 
         lastInput = input;
         lastZ = z;
+        lastActivation = activated;
         lastOutput = output;
+        lastMask = mask;
         return output;
+    }
+
+    private Matrix makeDropoutMask(int rows, int cols){
+        double keepProbability = 1.0 - dropoutRate;
+        double scale = 1.0 / keepProbability;
+
+        Matrix mask = new Matrix(rows, cols);
+        for(int i = 0; i < rows; i++){
+            for(int j = 0; j < cols; j++){
+
+                if(dropoutRng.nextDouble() < keepProbability){
+                    mask.set(i, j, scale);
+                }
+            }
+        }
+        return mask;
     }
 
     public Matrix backward(Matrix gradOutput){
@@ -54,12 +92,55 @@ public class DenseLayer{
             throw new IllegalArgumentException("gradient " + gradOutput.shape() + " does not match layer output " + lastOutput.shape());
         }
 
-        Matrix gradZ = activation.backward(lastZ, lastOutput, gradOutput);
+        Matrix gradActivated = gradOutput;
+        if(lastMask != null){
+            gradActivated = gradOutput.hadamard(lastMask);
+        }
+
+        Matrix gradZ = activation.backward(lastZ, lastActivation, gradActivated);
 
         gradWeights = lastInput.transpose().multiply(gradZ);
         gradBiases = gradZ.columnSums();
 
         return gradZ.multiply(weights.transpose());
+    }
+
+    public void setDropout(double rate, Random rng){
+        if(!(rate >= 0.0 && rate < 1.0)){
+            throw new IllegalArgumentException("dropout rate must be in [0, 1), got " + rate);
+        }
+        if(rate > 0.0 && rng == null){
+            throw new IllegalArgumentException("dropout needs a random number generator");
+        }
+        this.dropoutRate = rate;
+        this.dropoutRng = rate > 0.0 ? rng : null;
+    }
+
+    public double getDropoutRate(){
+        return dropoutRate;
+    }
+
+    public void setTraining(boolean training){
+        this.training = training;
+    }
+
+    public boolean isTraining(){
+        return training;
+    }
+
+    public Matrix getLastMask(){
+        return lastMask;
+    }
+
+    public void addWeightDecayGradient(double lambda){
+        if(gradWeights == null){
+            throw new IllegalStateException("call backward() before adding the weight decay gradient");
+        }
+        gradWeights.addScaledInPlace(weights, lambda);
+    }
+
+    public double weightSquaredSum(){
+        return weights.sumOfSquares();
     }
 
     public int inputSize(){
@@ -108,6 +189,10 @@ public class DenseLayer{
 
     @Override
     public String toString(){
-        return "Dense(" + inputSize() + " -> " + outputSize() + ", " + activation.name() + ")";
+        String text = "Dense(" + inputSize() + " -> " + outputSize() + ", " + activation.name() + ")";
+        if(dropoutRate > 0.0){
+            text += String.format(Locale.US, " dropout %.2f", dropoutRate);
+        }
+        return text;
     }
 }

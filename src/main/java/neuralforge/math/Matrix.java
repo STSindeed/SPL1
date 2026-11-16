@@ -13,7 +13,7 @@ public class Matrix{
     private final double[] data;
 
     public Matrix(int rows, int cols){
-        // a matrix with zero or negative size makes no sense, so fail early
+
         if(rows <= 0 || cols <= 0){
             throw new IllegalArgumentException("size must be positive, got " + rows + "x" + cols);
         }
@@ -88,6 +88,19 @@ public class Matrix{
         Matrix m = new Matrix(rows, cols);
         System.arraycopy(data, 0, m.data, 0, data.length);
         return m;
+    }
+
+    public void copyFrom(Matrix other){
+        checkSameShape(other, "copyFrom");
+        System.arraycopy(other.data, 0, this.data, 0, data.length);
+    }
+
+    public double sumOfSquares(){
+        double sum = 0.0;
+        for(double value : data){
+            sum += value * value;
+        }
+        return sum;
     }
 
     public Matrix multiply(Matrix other){
