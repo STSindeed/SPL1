@@ -4,8 +4,13 @@ import neuralforge.activation.ReLU;
 import neuralforge.activation.Sigmoid;
 import neuralforge.activation.Softmax;
 import neuralforge.activation.Tanh;
+import neuralforge.data.ColumnProfile;
+import neuralforge.data.DataFormatException;
+import neuralforge.data.DataOptions;
+import neuralforge.data.DataPipeline;
 import neuralforge.data.Dataset;
 import neuralforge.data.DatasetLoader;
+import neuralforge.data.PreparedData;
 import neuralforge.experiment.OptimizerComparison;
 import neuralforge.experiment.RegularizationComparison;
 import neuralforge.gradcheck.GradientChecker;
@@ -42,6 +47,7 @@ public class Main{
     private static final String USAGE = "usage: Main [all | check | xor | blobs | iris | mnist [trainLimit [epochs [optimizer [schedule [l2 [dropout [patience]]]]]]]\n"
         + "                  | optimizers [iris | mnist [trainLimit [epochs]]] | decay [trainLimit [epochs [optimizer [startRate]]]]\n"
         + "                  | regularize [trainLimit [epochs [l2 [dropout [patience]]]]]\n"
+        + "                  | data [csvFile [targetColumn [epochs]]]\n"
         + "                  | eval [modelFile] | gui [modelFile]]\n"
         + "optimizers: sgd, momentum, nesterov, rmsprop, adam\n"
         + "schedules: constant, step, exp, inverse, cosine";
@@ -88,6 +94,10 @@ public class Main{
         }
         if(mode.equals("regularize")){
             regularizeDemo(args);
+            known = true;
+        }
+        if(mode.equals("data")){
+            dataDemo(args);
             known = true;
         }
         if(mode.equals("eval")){
@@ -494,6 +504,78 @@ public class Main{
         System.out.println();
         System.out.println("validation loss while training");
         System.out.print(RegularizationComparison.formatValidationLoss(results, Math.max(1, epochs / 10)));
+        System.out.println();
+    }
+
+    private static void dataDemo(String[] args){
+        System.out.println("== 10. data handling ==");
+
+        String path = args.length > 1 ? args[1] : "data/messy_customers.csv";
+        String target = args.length > 2 ? args[2] : null;
+        int epochs = 80;
+        try{
+            if(args.length > 3){
+                epochs = Integer.parseInt(args[3]);
+            }
+        }catch(NumberFormatException e){
+            System.out.println(USAGE);
+            return;
+        }
+        if(epochs < 1){
+            System.out.println("epochs must be at least 1");
+            return;
+        }
+
+        PreparedData data;
+        try{
+            DataOptions options = new DataOptions().missingIndicators(true);
+            if(target == null){
+                data = DataPipeline.loadByIndex(path, true, -1, options);
+            }else{
+                data = DataPipeline.loadByName(path, target, options);
+            }
+        }catch(DataFormatException e){
+            System.out.println("the data cannot be used: " + e.getMessage());
+            return;
+        }
+
+        System.out.println("columns (measured on the rows that have a label):");
+        for(ColumnProfile profile : data.getProfiles()){
+            System.out.println("  " + profile.describe());
+        }
+        System.out.println();
+        System.out.println("what the pipeline did:");
+        System.out.print(data.getReport().format());
+        System.out.println();
+        System.out.print(data.describe());
+        System.out.println("features: " + String.join(", ", data.getPreprocessor().getFeatureNames()));
+        System.out.println();
+
+        Dataset train = data.getTrain();
+        Dataset test = data.getTest();
+
+        int hidden = Math.max(8, Math.min(64, 2 * train.featureCount()));
+        Random rng = new Random(2026);
+        NeuralNetwork net = new NeuralNetwork();
+        net.addLayer(new DenseLayer(train.featureCount(), hidden, new ReLU(), new HeInitializer(), rng));
+        net.addLayer(new DenseLayer(hidden, train.classCount(), new Softmax(), new XavierInitializer(), rng));
+        System.out.print(net.summary());
+
+        Trainer trainer = new Trainer(net, new CrossEntropy(), OptimizerFactory.create("adam"), rng);
+        trainer.train(train, test, epochs, 32, Math.max(1, epochs / 8));
+
+        Evaluation result = trainer.evaluate(test);
+        ConfusionMatrix matrix = ConfusionMatrix.of(test.getLabels(), result.getPredictions(), test.classCount());
+        System.out.print(matrix.format(test.getClassNames()));
+        System.out.print(matrix.report(test.getClassNames()));
+
+        int[] counts = test.classCounts();
+        int biggest = 0;
+        for(int count : counts){
+            biggest = Math.max(biggest, count);
+        }
+        System.out.println(String.format(Locale.US, "test accuracy %.2f%%, always answering the most common class would give %.2f%%",
+            100 * result.getAccuracy(), 100.0 * biggest / test.size()));
         System.out.println();
     }
 

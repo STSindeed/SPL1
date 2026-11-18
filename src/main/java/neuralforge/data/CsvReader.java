@@ -3,19 +3,29 @@ package neuralforge.data;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
 public class CsvReader{
 
+    private static final char[] CANDIDATES = {',', ';', '\t', '|'};
+
+    private static final int SAMPLE_LINES = 20;
+
     private CsvReader(){
     }
 
     public static CsvTable read(String path, boolean hasHeader){
         return read(path, hasHeader, ',');
+    }
+
+    public static CsvTable readAuto(String path, boolean hasHeader){
+        return read(path, hasHeader, detectDelimiter(path));
     }
 
     public static CsvTable read(String path, boolean hasHeader, char delimiter){
@@ -25,7 +35,7 @@ public class CsvReader{
 
         int expected = -1;
 
-        try(BufferedReader reader = Files.newBufferedReader(Paths.get(path), StandardCharsets.UTF_8)){
+        try(BufferedReader reader = open(path)){
             String line;
             int lineNumber = 0;
 
@@ -49,18 +59,23 @@ public class CsvReader{
                         continue;
                     }
                 }else if(fields.length != expected){
-                    throw new IllegalArgumentException("line " + lineNumber + " has " + fields.length + " fields but the first line has " + expected);
+                    throw new DataFormatException("line " + lineNumber + " has " + fields.length + " fields but the first line has " + expected
+                        + ". Look for a missing or extra delimiter, or a text value that contains the delimiter but is not in quotes");
                 }
 
                 rows.add(fields);
                 lineNumbers.add(lineNumber);
             }
+        }catch(CharacterCodingException e){
+
+            throw new DataFormatException(path + " is not a plain text file (it is not valid UTF-8). "
+                + "If it is an Excel file, save it as CSV UTF-8 first");
         }catch(IOException e){
             throw new UncheckedIOException("could not read " + path + ": " + e.getMessage(), e);
         }
 
         if(expected == -1){
-            throw new IllegalArgumentException(path + " is empty");
+            throw new DataFormatException(path + " is empty");
         }
 
         if(header == null){
@@ -71,6 +86,76 @@ public class CsvReader{
         }
 
         return new CsvTable(header, rows, lineNumbers);
+    }
+
+    public static char detectDelimiter(String path){
+        List<String> sample = new ArrayList<>();
+        try(BufferedReader reader = open(path)){
+            String line;
+            while(sample.size() < SAMPLE_LINES && (line = reader.readLine()) != null){
+                if(sample.isEmpty() && line.startsWith("\uFEFF")){
+                    line = line.substring(1);
+                }
+                if(!line.trim().isEmpty()){
+                    sample.add(line);
+                }
+            }
+        }catch(CharacterCodingException e){
+            throw new DataFormatException(path + " is not a plain text file (it is not valid UTF-8). "
+                + "If it is an Excel file, save it as CSV UTF-8 first");
+        }catch(IOException e){
+            throw new UncheckedIOException("could not read " + path + ": " + e.getMessage(), e);
+        }
+
+        if(sample.isEmpty()){
+            return ',';
+        }
+
+        char best = ',';
+        int bestCount = 0;
+        for(char candidate : CANDIDATES){
+            int first = countOutsideQuotes(sample.get(0), candidate);
+            if(first == 0){
+                continue;
+            }
+            boolean consistent = true;
+            for(String line : sample){
+                if(countOutsideQuotes(line, candidate) != first){
+                    consistent = false;
+                    break;
+                }
+            }
+            if(consistent && first > bestCount){
+                best = candidate;
+                bestCount = first;
+            }
+        }
+        return best;
+    }
+
+    private static BufferedReader open(String path) throws IOException{
+        Path file = Paths.get(path);
+        if(Files.isDirectory(file)){
+            throw new DataFormatException(path + " is a folder, not a file");
+        }
+        if(!Files.exists(file)){
+            throw new DataFormatException("file not found: " + path + " (the program looked in " + file.toAbsolutePath().getParent() + ")");
+        }
+        return Files.newBufferedReader(file, StandardCharsets.UTF_8);
+    }
+
+    private static int countOutsideQuotes(String line, char target){
+        int count = 0;
+        boolean inQuotes = false;
+        for(int i = 0; i < line.length(); i++){
+            char c = line.charAt(i);
+            if(c == '"'){
+                inQuotes = !inQuotes;
+            }else if(c == target && !inQuotes){
+                count++;
+            }
+        }
+        return count;
     }
 
     static String[] parseLine(String line, char delimiter, int lineNumber){
@@ -106,7 +191,7 @@ public class CsvReader{
                 atFieldStart = true;
             }else if(wasQuoted){
                 if(!Character.isWhitespace(c)){
-                    throw new IllegalArgumentException("line " + lineNumber + ": unexpected '" + c + "' after a closing quote");
+                    throw new DataFormatException("line " + lineNumber + ": unexpected '" + c + "' after a closing quote");
                 }
             }else if(c == '"' && atFieldStart){
                 current.setLength(0);
@@ -123,7 +208,7 @@ public class CsvReader{
         }
 
         if(inQuotes){
-            throw new IllegalArgumentException("line " + lineNumber + ": a quote is opened but never closed");
+            throw new DataFormatException("line " + lineNumber + ": a quote is opened but never closed");
         }
 
         fields.add(wasQuoted ? current.toString() : current.toString().trim());
