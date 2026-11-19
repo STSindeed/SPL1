@@ -30,6 +30,14 @@ window where you draw a digit and the network tells you which digit it is.
 - **Data pipeline:** CSV reader (quoted fields, missing values), label encoder,
   stratified train/test split, standard and min-max scalers, IDX reader for MNIST
   (plain or `.gz`)
+- **Robust data handling** for any CSV with a header: the delimiter is detected, the
+  type of every column is guessed (numeric or categorical), missing values are filled
+  (median or mean), text columns are one-hot encoded, useless columns (constant,
+  identifiers, too many holes) are dropped, and the task is detected from the target
+  (binary, multiclass, or regression, which is refused with an explanation). Everything
+  is learned from the training rows only, and every automatic decision is written to a report
+- **Clear error messages** for bad input: line and column of a bad cell, missing files,
+  Excel files, duplicate column names, a target that cannot be used
 - **Training loop** that reports loss, accuracy and learning rate after every epoch
   on the training and test data, and saves the history as a CSV file
 - **Metrics:** accuracy, confusion matrix, precision, recall, F1, top-k accuracy,
@@ -79,6 +87,7 @@ to a bigger value, for example `JAVA_OPTS=-Xmx4g ./build.sh run mnist`
 | `run optimizers [iris or mnist [n [e]]]`  | trains with every optimizer and prints a comparison table            | iris or MNIST      |
 | `run decay [n [e [optimizer [rate]]]]`    | trains with every learning rate schedule and prints a table          | MNIST files        |
 | `run regularize [n [e [l2 [dropout [patience]]]]]` | trains with L2, dropout and early stopping and prints a comparison table | MNIST files |
+| `run data [csv [target [epochs]]]` | data handling on any CSV with a header, then trains a network on it | `data/messy_customers.csv` |
 | `run eval [file]`                         | loads a saved model and measures it on the 10000 test images         | MNIST files, model |
 | `run gui [file]`                          | opens the window where you draw a digit                              | model              |
 
@@ -127,17 +136,59 @@ in `data/mnist/`, with exactly these names (hyphens, not dots):
 They must be files, not folders. The `.gz` versions work too, the reader looks at
 the content of the file and not at its name. See `data/mnist/README.txt`.
 
+## Data handling
+
+`DataPipeline` turns a CSV file into a training set and a test set. The steps are always
+the same, and the order matters:
+
+1. read the file (the delimiter is found by looking at the first lines)
+2. drop the rows that have no label
+3. profile every column: numeric or categorical, missing count, distinct values
+4. detect the task from the target column
+5. split into training and test rows, keeping the class shares
+6. fit the preprocessor on the **training rows only**, then transform both parts
+
+How a column is treated:
+
+| Column looks like                               | What happens                                              |
+|-------------------------------------------------|-----------------------------------------------------------|
+| numbers (a few typos are tolerated, see below)  | holes filled with the median, then scaled                 |
+| text, up to 20 different values                 | one-hot encoded, "Red" and "red" are one category         |
+| text, many different values, nearly all unique  | dropped (name, e-mail, id)                                |
+| same value in every row                         | dropped                                                   |
+| more than half of the values missing            | dropped                                                   |
+| a number column called id, index, ..._id        | dropped if every value is different                       |
+
+A stray text in a numeric column stops the run with a message like
+`line 18, column 'v': '12o' is not a number`. With `badNumbersAsMissing` it is treated as a hole
+instead. A category in the test rows that was never seen in training is encoded as all zeros and
+reported. With `missingIndicators` a 0/1 column tells the network which numbers were missing.
+
+Task detection: two distinct values is binary classification. Text is classification.
+Whole numbers with few distinct values (up to 20) are class codes. Anything else numeric
+(decimals, or many distinct values) is regression, which NeuralForge cannot do, so the
+file is refused with an explanation, unless `forceClassification` says the numbers are class codes.
+
+All settings are in `DataOptions`, for example
+`new DataOptions().missingIndicators(true).maxCategories(30).testFraction(0.25)`.
+
 ## Tests
 
     ./build.sh test
 
-runs all 30 test classes. They use a small test runner of our own
+runs all 38 test classes. They use a small test runner of our own
 (`TestHelper`), no JUnit. Every class prints how many checks passed and failed.
 The script runs all classes even if one fails, lists the failed ones at the end
 and exits with an error.
 
 The optimizer tests check every update rule against numbers worked out by hand,
 and check that every optimizer really learns a simple function.
+
+The data handling tests cover the strict number parser, the column profile, the task detector,
+imputation (also that test rows never influence the fill value), one-hot encoding, the
+preprocessor (dropped columns, case, unseen categories, indicators, columns found by name), the
+pipeline from file to datasets, a network that learns from the prepared data, and the text of the
+error messages.
 
 The regularization tests check the dropout mask (values, share of dropped neurons,
 average output), the dropout gradient against a numerical gradient with a fixed mask,
@@ -165,8 +216,9 @@ stopping rule with made-up loss curves, including restoring the best weights.
         schedule/                           learning rate schedules
         network/                            network and mini-batch training
         gradcheck/                          gradient checking
-        data/                               CSV and IDX readers, Dataset, label encoder, split
-        preprocess/                         standard and min-max scalers
+        data/                               CSV and IDX readers, Dataset, label encoder, split,
+                                            column profiling, task detection, data pipeline
+        preprocess/                         standard and min-max scalers, imputer, one-hot encoder
         training/                           training loop, evaluation, history, early stopping
         experiment/                         comparison of optimizers, schedules and regularization
         metrics/                            confusion matrix, top-k accuracy
@@ -265,6 +317,14 @@ can vary, so it should not be over-read. Early stopping cuts the training time b
 half, but it watches the loss, and the accuracy was still creeping up slightly after the
 loss turned, so it ends a little lower here. These are single runs on a small training set.
 
+**Data handling** (`run data`, the messy demo file `data/messy_customers.csv`: 420 customers,
+synthetic, with holes written as empty cells, `?` and `NA`, an id column, a constant column, an
+e-mail column and mixed capital letters). 3 rows without a label are dropped, 3 columns are dropped, the
+others give 17 features. A network 17-34-2 trained for 80 epochs reaches 73.8% on the 84 test rows. Always
+answering the most common class would give 65.5%, and the model finds only 41% of the customers that
+churn, so the accuracy alone says little. The file is small and the model is basic, the point of the demo
+is the data handling, not the score.
+
 ## Known limits
 
 - Digits that are drawn small, off-center or in an unusual style are not always
@@ -274,12 +334,17 @@ loss turned, so it ends a little lower here. These are single runs on a small tr
 - The optimizer state is not saved with the model, so training cannot be resumed
   exactly where it stopped. L2, dropout and early stopping are training settings only,
   the model file holds weights and biases, nothing else.
+- Numbers must use a decimal point, "3,5" is not read as a number. Dates are not understood
+  and are treated as text. A regression target is refused, the network only classifies.
+- Categories that differ in spelling (for example "Dhaka" and "Dacca") are different categories.
+  Only capital letters and spaces around the text are ignored.
+- The preprocessor is not saved to a file yet, so a trained model cannot be used on a new CSV
+  from another run of the program.
 - L2 is added to the gradient (classic L2), which for Adam is not the same as the
   decoupled weight decay of AdamW.
 
 ## Planned
 
-More robust data handling
-(categorical columns, automatic task detection), a command line with `train`,
-`predict` and `evaluate`, hyperparameter search with cross-validation, faster
+A command line with `train`,
+`predict` and `evaluate` (this needs the preprocessor to be saved with the model), hyperparameter search with cross-validation, faster
 matrix multiplication, a training report, and tests on more datasets.
