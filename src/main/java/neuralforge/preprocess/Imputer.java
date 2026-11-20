@@ -55,6 +55,20 @@ public class Imputer{
         return transform(data);
     }
 
+    public static Imputer restore(Strategy strategy, double[] fill){
+        if(fill.length == 0){
+            throw new IllegalArgumentException("an imputer needs at least one column");
+        }
+        for(double value : fill){
+            if(Double.isNaN(value) || Double.isInfinite(value)){
+                throw new IllegalArgumentException("a fill value must be a finite number");
+            }
+        }
+        Imputer imputer = new Imputer(strategy);
+        imputer.fill = fill.clone();
+        return imputer;
+    }
+
     public double[] getFill(){
         if(fill == null){
             throw new IllegalStateException("call fit() first");

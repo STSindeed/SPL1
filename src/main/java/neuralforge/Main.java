@@ -4,6 +4,8 @@ import neuralforge.activation.ReLU;
 import neuralforge.activation.Sigmoid;
 import neuralforge.activation.Softmax;
 import neuralforge.activation.Tanh;
+import neuralforge.cli.Cli;
+import neuralforge.cli.Suggestions;
 import neuralforge.data.ColumnProfile;
 import neuralforge.data.DataFormatException;
 import neuralforge.data.DataOptions;
@@ -37,6 +39,7 @@ import neuralforge.training.Trainer;
 import neuralforge.training.TrainingHistory;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
@@ -49,6 +52,7 @@ public class Main{
         + "                  | regularize [trainLimit [epochs [l2 [dropout [patience]]]]]\n"
         + "                  | data [csvFile [targetColumn [epochs]]]\n"
         + "                  | eval [modelFile] | gui [modelFile]]\n"
+        + "       Main train <config> | predict <model> <csv> | evaluate <model> <csv> | inspect <model> | template | help [command]\n"
         + "optimizers: sgd, momentum, nesterov, rmsprop, adam\n"
         + "schedules: constant, step, exp, inverse, cosine";
 
@@ -57,6 +61,14 @@ public class Main{
     private static final String MNIST_FOLDER = "data/mnist/";
 
     public static void main(String[] args){
+        if(args.length > 0 && Cli.isCommand(args[0])){
+            int code = Cli.run(args, System.out, System.err);
+            if(code != Cli.OK){
+                System.exit(code);
+            }
+            return;
+        }
+
         String mode = args.length > 0 ? args[0].toLowerCase() : "all";
         boolean all = mode.equals("all");
 
@@ -110,7 +122,9 @@ public class Main{
         }
 
         if(!known){
-            System.out.println("unknown demo '" + mode + "'");
+            List<String> names = new ArrayList<>(Arrays.asList("all", "check", "xor", "blobs", "iris", "mnist", "optimizers", "decay", "regularize", "data", "eval", "gui"));
+            names.addAll(Cli.commandNames());
+            System.out.println("unknown demo or command '" + mode + "'" + Suggestions.hint(mode, names));
             System.out.println(USAGE);
         }
     }

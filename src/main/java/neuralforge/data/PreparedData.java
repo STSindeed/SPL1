@@ -9,17 +9,20 @@ public class PreparedData{
     private final TablePreprocessor preprocessor;
     private final TaskType task;
     private final String taskReason;
+
+    private final boolean numericTarget;
     private final String targetName;
     private final ColumnProfile[] profiles;
     private final DataReport report;
 
     PreparedData(Dataset train, Dataset test, TablePreprocessor preprocessor, TaskType task, String taskReason,
-                 String targetName, ColumnProfile[] profiles, DataReport report){
+                 boolean numericTarget, String targetName, ColumnProfile[] profiles, DataReport report){
         this.train = train;
         this.test = test;
         this.preprocessor = preprocessor;
         this.task = task;
         this.taskReason = taskReason;
+        this.numericTarget = numericTarget;
         this.targetName = targetName;
         this.profiles = profiles;
         this.report = report;
@@ -43,6 +46,10 @@ public class PreparedData{
 
     public String getTaskReason(){
         return taskReason;
+    }
+
+    public boolean isNumericTarget(){
+        return numericTarget;
     }
 
     public String getTargetName(){

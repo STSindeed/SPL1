@@ -124,6 +124,12 @@ public class DataOptions{
         return this;
     }
 
+    public java.util.List<String> getExtraMissingTokens(){
+        java.util.List<String> tokens = new java.util.ArrayList<>(extraMissing);
+        java.util.Collections.sort(tokens);
+        return tokens;
+    }
+
     public boolean isMissing(String text){
         return MissingValues.isMissing(text, extraMissing);
     }

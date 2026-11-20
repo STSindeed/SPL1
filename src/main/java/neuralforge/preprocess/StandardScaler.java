@@ -59,6 +59,21 @@ public class StandardScaler implements Scaler{
         return result;
     }
 
+    public static StandardScaler restore(double[] mean, double[] std){
+        if(mean.length != std.length || mean.length == 0){
+            throw new IllegalArgumentException("mean and std must have the same, non-zero length");
+        }
+        for(int j = 0; j < std.length; j++){
+            if(!(std[j] > 0.0) || Double.isInfinite(std[j]) || Double.isNaN(mean[j]) || Double.isInfinite(mean[j])){
+                throw new IllegalArgumentException("column " + j + " has an impossible mean or standard deviation");
+            }
+        }
+        StandardScaler scaler = new StandardScaler();
+        scaler.mean = mean.clone();
+        scaler.std = std.clone();
+        return scaler;
+    }
+
     public double[] getMean(){
         checkFitted();
         return mean.clone();

@@ -110,6 +110,14 @@ public class TablePreprocessor{
             categoryHasMissing.add(anyMissing);
         }
 
+        featureNames = buildFeatureNames();
+        fitted = true;
+
+        report.info("using " + numericNames.size() + " numeric and " + categoricalNames.size() + " categorical columns, "
+            + featureNames.length + " features after encoding");
+    }
+
+    private String[] buildFeatureNames(){
         List<String> names = new ArrayList<>(numericNames);
         for(int k = 0; k < categoricalNames.size(); k++){
             for(String category : encoders.get(k).getCategories()){
@@ -121,11 +129,34 @@ public class TablePreprocessor{
                 names.add(numericNames.get(j) + "?missing");
             }
         }
-        featureNames = names.toArray(new String[0]);
-        fitted = true;
+        return names.toArray(new String[0]);
+    }
 
-        report.info("using " + numericNames.size() + " numeric and " + categoricalNames.size() + " categorical columns, "
-            + featureNames.length + " features after encoding");
+    static TablePreprocessor restore(DataOptions options, List<String> numericNames, boolean[] indicators, Imputer imputer, StandardScaler scaler,
+                                     List<String> categoricalNames, List<OneHotEncoder> encoders, List<Boolean> categoryHasMissing,
+                                     List<String> dropped){
+        if(numericNames.isEmpty() && categoricalNames.isEmpty()){
+            throw new DataFormatException("a preprocessor needs at least one feature column");
+        }
+        if(indicators.length != numericNames.size() || encoders.size() != categoricalNames.size() || categoryHasMissing.size() != categoricalNames.size()){
+            throw new DataFormatException("the saved preprocessor is inconsistent: the number of columns and the number of settings differ");
+        }
+        if(numericNames.isEmpty() != (imputer == null)){
+            throw new DataFormatException("the saved preprocessor is inconsistent: numeric columns and their fill values do not match");
+        }
+
+        TablePreprocessor p = new TablePreprocessor(options);
+        p.numericNames.addAll(numericNames);
+        p.hasIndicator = indicators.clone();
+        p.imputer = imputer;
+        p.scaler = scaler;
+        p.categoricalNames.addAll(categoricalNames);
+        p.encoders.addAll(encoders);
+        p.categoryHasMissing.addAll(categoryHasMissing);
+        p.dropped.addAll(dropped);
+        p.featureNames = p.buildFeatureNames();
+        p.fitted = true;
+        return p;
     }
 
     public Matrix transform(CsvTable table, int[] rows, DataReport report, String setName){
@@ -206,6 +237,35 @@ public class TablePreprocessor{
             }
         }
         return result;
+    }
+
+    public DataOptions getOptions(){
+        return options;
+    }
+
+    boolean[] getIndicators(){
+        checkFitted();
+        return hasIndicator.clone();
+    }
+
+    Imputer getImputer(){
+        checkFitted();
+        return imputer;
+    }
+
+    StandardScaler getScaler(){
+        checkFitted();
+        return scaler;
+    }
+
+    List<OneHotEncoder> getEncoders(){
+        checkFitted();
+        return new ArrayList<>(encoders);
+    }
+
+    List<Boolean> getCategoryHasMissing(){
+        checkFitted();
+        return new ArrayList<>(categoryHasMissing);
     }
 
     public String[] getFeatureNames(){

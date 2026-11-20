@@ -108,7 +108,7 @@ public final class DataPipeline{
 
         Dataset train = new Dataset(trainFeatures, parts[0].getLabels(), classNames);
         Dataset test = new Dataset(testFeatures, parts[1].getLabels(), classNames);
-        return new PreparedData(train, test, preprocessor, task, reason, targetName, profiles, report);
+        return new PreparedData(train, test, preprocessor, task, reason, numericTarget, targetName, profiles, report);
     }
 
     private static void checkHeader(String[] header){
@@ -147,7 +147,7 @@ public final class DataPipeline{
         return rows;
     }
 
-    private static String labelText(String text, boolean numericTarget, DataOptions options){
+    public static String labelText(String text, boolean numericTarget, DataOptions options){
         if(numericTarget){
             double value = NumberText.parse(text);
             if(!Double.isNaN(value) && NumberText.isWhole(value)){

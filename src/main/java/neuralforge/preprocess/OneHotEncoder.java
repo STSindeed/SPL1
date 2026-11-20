@@ -44,6 +44,20 @@ public class OneHotEncoder{
         }
     }
 
+    public static OneHotEncoder restore(String[] categories){
+        if(categories.length == 0){
+            throw new IllegalArgumentException("an encoder needs at least one category");
+        }
+        OneHotEncoder encoder = new OneHotEncoder();
+        encoder.categories = categories.clone();
+        for(int i = 0; i < categories.length; i++){
+            if(encoder.indexOf.put(categories[i], i) != null){
+                throw new IllegalArgumentException("the category '" + categories[i] + "' appears twice");
+            }
+        }
+        return encoder;
+    }
+
     public int indexOf(String value){
         checkFitted();
         Integer index = indexOf.get(value);
